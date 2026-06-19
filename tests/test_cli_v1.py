@@ -173,6 +173,47 @@ def test_cli_verify_keyring_and_public_do_not_require_master_password(tmp_path: 
     assert "INVALID_PUBLIC_KEY_DOCUMENT" in invalid_public_result.stderr
 
 
+def test_cli_verify_rejects_documents_that_do_not_use_stable_json(tmp_path: Path) -> None:
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    public_path = tmp_path / "public.hxdl.json"
+    env = {"HXDL_MASTER_PASSWORD": PASSWORD}
+
+    assert (
+        run_hxdl(
+            "init",
+            "--keyring",
+            str(keyring_path),
+            "--password-env",
+            "HXDL_MASTER_PASSWORD",
+            "--scrypt-n",
+            "16384",
+            env=env,
+        ).returncode
+        == 0
+    )
+    assert (
+        run_hxdl("export-public", "--keyring", str(keyring_path), "--out", str(public_path)).returncode
+        == 0
+    )
+
+    keyring_path.write_text(
+        json.dumps(json.loads(keyring_path.read_text(encoding="utf-8")), separators=(",", ":")),
+        encoding="utf-8",
+    )
+    public_path.write_text(
+        json.dumps(json.loads(public_path.read_text(encoding="utf-8")), separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+    keyring_result = run_hxdl("verify-keyring", "--keyring", str(keyring_path))
+    public_result = run_hxdl("verify-public", "--public", str(public_path))
+
+    assert keyring_result.returncode != 0
+    assert public_result.returncode != 0
+    assert "INVALID_KEYRING" in keyring_result.stderr
+    assert "INVALID_PUBLIC_KEY_DOCUMENT" in public_result.stderr
+
+
 def test_cli_bench_reports_v1_operations_as_json_lines(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     env = {"HXDL_MASTER_PASSWORD": PASSWORD}

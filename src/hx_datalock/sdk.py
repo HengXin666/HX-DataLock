@@ -160,7 +160,15 @@ def _validate_envelope_alg(raw: dict[str, Any]) -> None:
 
 
 def _envelope_b64(raw: dict[str, Any], field: str) -> bytes:
-    return _from_b64(raw[field], field, error_code=DataLockErrorCode.TAMPERED_ENVELOPE)
+    return _from_b64(raw.get(field), field, error_code=DataLockErrorCode.TAMPERED_ENVELOPE)
+
+
+def _read_json_document(path: str | Path) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _is_stable_json_document(path: str | Path, stable_json: str) -> bool:
+    return Path(path).read_text(encoding="utf-8") == stable_json
 
 
 def check_password_strength(master_password: str) -> PasswordStrengthReport:
@@ -538,9 +546,30 @@ def init_keyring(path: str | Path, master_password: str, *, scrypt_n: int = DEFA
 
 
 def load_keyring(path: str | Path) -> Keyring:
-    keyring = Keyring(json.loads(Path(path).read_text(encoding="utf-8")))
+    keyring = Keyring(_read_json_document(path))
     keyring.verify()
     return keyring
+
+
+def verify_keyring_file(path: str | Path, *, require_stable_json: bool = False) -> Keyring:
+    keyring = load_keyring(path)
+    if require_stable_json and not _is_stable_json_document(path, keyring.to_json()):
+        raise DataLockError(DataLockErrorCode.INVALID_KEYRING, "Keyring does not use stable v1 JSON")
+    return keyring
+
+
+def verify_public_key_document_file(
+    path: str | Path,
+    *,
+    require_stable_json: bool = False,
+) -> PublicKeyDocument:
+    document = PublicKeyDocument.read(path)
+    if require_stable_json and not _is_stable_json_document(path, document.to_json()):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
+            "Public Key Document does not use stable v1 JSON",
+        )
+    return document
 
 
 def export_public_key_document(keyring: Keyring) -> PublicKeyDocument:

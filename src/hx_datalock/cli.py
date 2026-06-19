@@ -19,6 +19,8 @@ from .sdk import (
     load_keyring,
     makeSenderDataLock,
     makeUserDataLock,
+    verify_keyring_file,
+    verify_public_key_document_file,
 )
 
 
@@ -69,12 +71,12 @@ def _cmd_open(args: argparse.Namespace) -> None:
 
 
 def _cmd_verify_keyring(args: argparse.Namespace) -> None:
-    keyring = load_keyring(args.keyring)
+    keyring = verify_keyring_file(args.keyring, require_stable_json=True)
     print(f"Valid Keyring: {keyring.key_id}")
 
 
 def _cmd_verify_public(args: argparse.Namespace) -> None:
-    public_key_document = PublicKeyDocument.read(args.public)
+    public_key_document = verify_public_key_document_file(args.public, require_stable_json=True)
     print(f"Valid Public Key Document: {public_key_document.key_id}")
 
 

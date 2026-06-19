@@ -496,7 +496,12 @@ export class UserDataLock {
     );
   }
   openText(envelope) {
-    return new TextDecoder('utf-8', { fatal: true }).decode(this.openBytes(envelope));
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(this.openBytes(envelope));
+    } catch (error) {
+      if (error instanceof DataLockError) throw error;
+      throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'Data Envelope payload is not valid UTF-8');
+    }
   }
   openFile(inputPath, outputPath) {
     const plaintext = this.openBytes(DataEnvelope.read(inputPath));

@@ -18,6 +18,8 @@ from .sdk import (
     make_v1_compatibility_manifest,
     open_file,
     send_file,
+    verify_keyring_file,
+    verify_public_key_document_file,
 )
 
 __all__ = [
@@ -40,4 +42,6 @@ __all__ = [
     "make_v1_compatibility_manifest",
     "open_file",
     "send_file",
+    "verify_keyring_file",
+    "verify_public_key_document_file",
 ]

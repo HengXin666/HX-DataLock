@@ -437,6 +437,36 @@ user.close();
     subprocess.run(["node", str(script_path)], check=True)
 
 
+def test_node_sdk_open_text_reports_invalid_utf8_with_stable_error_code(tmp_path: Path) -> None:
+    script_path = tmp_path / "node-invalid-utf8.mjs"
+    script_path.write_text(
+        f"""
+import {{
+  DataLockErrorCode,
+  createKeyring,
+  makeUserDataLock,
+}} from {str((Path.cwd() / "scripts/hx-datalock.mjs").as_uri())!r};
+
+const password = 'correct horse battery staple for hx datalock';
+const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const user = makeUserDataLock(keyring, {{ masterPassword: password }});
+const envelope = user.lockBytes(Buffer.from([0xff]));
+
+try {{
+  user.openText(envelope);
+  throw new Error('invalid UTF-8 payload was accepted');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.INVALID_UTF8) {{
+    throw error;
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+
+    subprocess.run(["node", str(script_path)], check=True)
+
+
 def test_simple_python_api_round_trips_file(tmp_path: Path) -> None:
     password = "correct horse battery staple for hx datalock"
     keyring_path = tmp_path / "keyring.hxdl.json"

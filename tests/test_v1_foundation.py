@@ -92,6 +92,20 @@ def test_malformed_data_envelope_uses_tampered_envelope_error_code() -> None:
     assert envelope_exc.value.code is DataLockErrorCode.TAMPERED_ENVELOPE
 
 
+def test_data_envelopes_with_missing_binary_fields_use_tampered_envelope_error_code() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
+    envelope = user.lockBytes(b"malformed envelope")
+
+    for field in ["hkdfSalt", "nonce", "tag", "ciphertext"]:
+        raw = dict(envelope.raw)
+        del raw[field]
+
+        with pytest.raises(DataLockError) as envelope_exc:
+            user.openBytes(DataEnvelope(raw))
+        assert envelope_exc.value.code is DataLockErrorCode.TAMPERED_ENVELOPE
+
+
 def test_v1_documents_write_stable_json_and_read_by_field(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     public_key_path = tmp_path / "public-key.hxdl.json"
