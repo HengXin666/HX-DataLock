@@ -27,7 +27,7 @@ def test_python_encrypts_and_node_decrypts(tmp_path: Path) -> None:
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "init",
             "--keyring",
             str(keyring_path),
@@ -47,7 +47,7 @@ def test_python_encrypts_and_node_decrypts(tmp_path: Path) -> None:
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(keyring_path),
@@ -75,7 +75,7 @@ def test_node_locks_with_public_document_and_python_opens(tmp_path: Path) -> Non
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "init",
             "--keyring",
             str(keyring_path),
@@ -90,7 +90,7 @@ def test_node_locks_with_public_document_and_python_opens(tmp_path: Path) -> Non
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "export-public",
             "--keyring",
             str(keyring_path),
@@ -103,7 +103,7 @@ def test_node_locks_with_public_document_and_python_opens(tmp_path: Path) -> Non
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "lock",
             "--public",
             str(public_path),
@@ -136,7 +136,7 @@ def test_python_public_document_works_with_node_lock_and_open(tmp_path: Path) ->
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "lock",
             "--public",
             str(public_path),
@@ -150,7 +150,7 @@ def test_python_public_document_works_with_node_lock_and_open(tmp_path: Path) ->
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(keyring_path),
@@ -184,7 +184,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     rejected_keyring_lock = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "lock",
             "--public",
             str(keyring_path),
@@ -203,7 +203,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "lock",
             "--public",
             str(public_path),
@@ -218,7 +218,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     wrong_password = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(keyring_path),
@@ -242,7 +242,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     mismatch_result = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(second_keyring_path),
@@ -267,7 +267,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     tampered_result = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(keyring_path),
@@ -291,7 +291,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     unsupported_schema = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(keyring_path),
@@ -316,7 +316,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     unsupported_algorithm = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "open",
             "--keyring",
             str(keyring_path),
@@ -377,7 +377,7 @@ def test_node_cli_rejects_oversized_v1_files(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             "node",
-            "scripts/hx-datalock.mjs",
+            "sdk/node/hx-datalock.mjs",
             "lock",
             "--public",
             str(public_path),
@@ -406,7 +406,7 @@ import {{
   exportPublicKeyDocument,
   makeSenderDataLock,
   makeUserDataLock,
-}} from {str((Path.cwd() / "scripts/hx-datalock.mjs").as_uri())!r};
+}} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
 const keyring = createKeyring(password, {{ scryptN: 16384 }});
@@ -445,7 +445,7 @@ import {{
   DataLockErrorCode,
   createKeyring,
   makeUserDataLock,
-}} from {str((Path.cwd() / "scripts/hx-datalock.mjs").as_uri())!r};
+}} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
 const keyring = createKeyring(password, {{ scryptN: 16384 }});

@@ -35,6 +35,17 @@ HX-DataLock 是一个"可写不可读"的通用加解密项目骨架。
 uv sync --dev
 ```
 
+## 仓库布局
+
+- `sdk/py/`: Python SDK 和 CLI 包源码。
+- `sdk/node/`: 当前 Node JavaScript SDK / CLI 入口。它不是 TypeScript 项目。
+- `examples/py/`: Python 使用示例。
+- `tests/py/`: Python SDK / CLI 测试。
+- `tests/compat/`: Python 与 Node 的跨 SDK 兼容测试。
+- `tests/workflows/`: GitHub Actions workflow 契约测试。
+
+TypeScript SDK 和 Android Kotlin SDK 还没有真实源码；对应缺口记录在 `.scratch/v1-spec/issues/11-implementation-gap-typescript-android-v1.md`。
+
 ## 1. 本地生成 GitHub 存储的 Keyring
 
 ```powershell
@@ -104,15 +115,15 @@ open_file("keyring.hxdl.json", "message.hxdl.json", "message.txt", "你的高熵
 Node CLI 和 Python SDK 使用同一种 `Keyring` / `Data Envelope` 格式, 因此可以交叉使用:
 
 ```powershell
-node scripts/hx-datalock.mjs export-public --keyring keyring.hxdl.json --out public.hxdl.json
-node scripts/hx-datalock.mjs lock --public public.hxdl.json --in message.txt --out message.hxdl.json
+node sdk/node/hx-datalock.mjs export-public --keyring keyring.hxdl.json --out public.hxdl.json
+node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --in message.txt --out message.hxdl.json
 uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
 ```
 
 ```powershell
 uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
 uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.json
-node scripts/hx-datalock.mjs open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
+node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
 Node 模块也导出 v1 SDK surface: `createKeyring`, `exportPublicKeyDocument`, `checkPasswordStrength`, `makeSenderDataLock`, `makeUserDataLock`, `DataEnvelope`, `Keyring`, `PublicKeyDocument` 和稳定 `DataLockErrorCode`。
@@ -127,18 +138,23 @@ v1 只支持单个完整 `Full Data Envelope`, 本地文件助手拒绝超过 25
 
 ```powershell
 uv run hxdl bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
-node scripts/hx-datalock.mjs bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
+node sdk/node/hx-datalock.mjs bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 ```
 
 基准输出为 JSON lines, 覆盖 `unlockKeyring`, `lockBytes`, `openBytes`, `lockFile`, `openFile`, 默认测量 1 MB, 10 MB 和 25 MB。输出用于本机观察, 不是硬性性能保证。
 
 ## GitHub Workflow
 
-`.github/workflows/keyring-check.yml` 会做三件事:
+`.github/workflows/keyring-check.yml` 会做两件事:
 
 - 验证提交的 `keyring.hxdl.json` 格式正确。
 - 检查没有明显提交裸私钥。
-- 用 `uv run pytest -q` 运行 Python SDK 与 Node CLI 的双向互通测试。
+
+`.github/workflows/sdk-tests.yml` 专门运行 SDK 测试:
+
+- Python SDK / CLI 测试: `tests/py/`
+- Node SDK surface 测试
+- Python 与 Node 的跨 SDK 兼容测试: `tests/compat/`
 
 Workflow 使用测试密码生成临时测试 Keyring, 不会接触你的真实主密码。
 

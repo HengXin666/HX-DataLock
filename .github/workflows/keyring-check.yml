@@ -4,8 +4,8 @@ on:
   push:
     paths:
       - "keyring.hxdl.json"
-      - "scripts/hx-datalock.mjs"
-      - "src/**"
+      - "sdk/node/**"
+      - "sdk/py/**"
       - "examples/**"
       - "tests/**"
       - "pyproject.toml"
@@ -14,8 +14,8 @@ on:
   pull_request:
     paths:
       - "keyring.hxdl.json"
-      - "scripts/hx-datalock.mjs"
-      - "src/**"
+      - "sdk/node/**"
+      - "sdk/py/**"
       - "examples/**"
       - "tests/**"
       - "pyproject.toml"
@@ -44,7 +44,7 @@ jobs:
             echo "No keyring.hxdl.json committed yet; run local init first."
             exit 0
           fi
-          node scripts/hx-datalock.mjs verify-keyring --keyring keyring.hxdl.json
+          node sdk/node/hx-datalock.mjs verify-keyring --keyring keyring.hxdl.json
       - name: Ensure no obvious raw private key material is committed
         shell: bash
         run: |

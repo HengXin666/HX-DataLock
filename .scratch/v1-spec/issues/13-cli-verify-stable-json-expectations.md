@@ -19,4 +19,4 @@ Issue 05 requires verification commands to validate stable JSON expectations. Py
 
 ## Comments
 
-- Fixed through TDD with CLI-level coverage in `tests/test_cli_v1.py`. Verification now uses stable JSON checks for Keyrings and Public Key Documents. Verified with `uv run pytest -q`.
+- Fixed through TDD with CLI-level coverage in `tests/py/test_cli_v1.py`. Verification now uses stable JSON checks for Keyrings and Public Key Documents. Verified with `uv run pytest -q`.

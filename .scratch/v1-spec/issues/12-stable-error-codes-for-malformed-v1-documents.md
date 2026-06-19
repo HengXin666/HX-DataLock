@@ -20,4 +20,4 @@ Malformed Data Envelopes with missing fields can leak implementation exceptions 
 
 ## Comments
 
-- Fixed through TDD with public-interface tests in `tests/test_v1_foundation.py` and `tests/test_cross_language.py`. Verified with `uv run pytest -q`.
+- Fixed through TDD with public-interface tests in `tests/py/test_v1_foundation.py` and `tests/compat/test_cross_language.py`. Verified with `uv run pytest -q`.

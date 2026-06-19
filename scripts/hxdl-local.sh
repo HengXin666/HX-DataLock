@@ -47,14 +47,14 @@ init_keyring() {
 }
 
 send_message() {
-  keyring="$(ask "Keyring path" "$KEYRING_PATH")"
+  public_key="$(ask "Public Key Document path" "public.hxdl.json")"
   input_path="$(ask "Plaintext input file" "")"
   output_path="$(ask "Encrypted output file" "${input_path}.hxdl.json")"
   if [ -z "$input_path" ] || [ -z "$output_path" ]; then
     say "error: input and output paths are required"
     return 1
   fi
-  run_hxdl send --keyring "$keyring" --in "$input_path" --out "$output_path"
+  run_hxdl lock --public "$public_key" --in "$input_path" --out "$output_path"
 }
 
 open_message() {
@@ -72,12 +72,13 @@ open_message() {
 
 verify_keyring() {
   keyring="$(ask "Keyring path" "$KEYRING_PATH")"
-  run_hxdl verify --keyring "$keyring"
+  run_hxdl verify-keyring --keyring "$keyring"
 }
 
 show_public_key() {
   keyring="$(ask "Keyring path" "$KEYRING_PATH")"
-  run_hxdl public-key --keyring "$keyring"
+  output_path="$(ask "Public Key Document output path" "public.hxdl.json")"
+  run_hxdl export-public --keyring "$keyring" --out "$output_path"
 }
 
 main_menu() {

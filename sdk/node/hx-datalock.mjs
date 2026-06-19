@@ -57,13 +57,13 @@ function usage() {
   console.log(`HX-DataLock
 
 Usage:
-  node scripts/hx-datalock.mjs init [--keyring keyring.hxdl.json] [--password-env NAME] [--scrypt-n N]
-  node scripts/hx-datalock.mjs export-public [--keyring keyring.hxdl.json] [--out public.hxdl.json]
-  node scripts/hx-datalock.mjs lock --public public.hxdl.json --in plain.bin --out sealed.hxdl.json
-  node scripts/hx-datalock.mjs open --keyring keyring.hxdl.json --in sealed.hxdl.json --out plain.bin [--password-env NAME]
-  node scripts/hx-datalock.mjs verify-keyring [--keyring keyring.hxdl.json]
-  node scripts/hx-datalock.mjs verify-public --public public.hxdl.json
-  node scripts/hx-datalock.mjs bench [--keyring keyring.hxdl.json] [--password-env NAME] [--sizes 1048576,10485760,26214400]
+  node sdk/node/hx-datalock.mjs init [--keyring keyring.hxdl.json] [--password-env NAME] [--scrypt-n N]
+  node sdk/node/hx-datalock.mjs export-public [--keyring keyring.hxdl.json] [--out public.hxdl.json]
+  node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --in plain.bin --out sealed.hxdl.json
+  node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in sealed.hxdl.json --out plain.bin [--password-env NAME]
+  node sdk/node/hx-datalock.mjs verify-keyring [--keyring keyring.hxdl.json]
+  node sdk/node/hx-datalock.mjs verify-public --public public.hxdl.json
+  node sdk/node/hx-datalock.mjs bench [--keyring keyring.hxdl.json] [--password-env NAME] [--sizes 1048576,10485760,26214400]
 `);
 }
 
