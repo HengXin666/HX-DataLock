@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import json
 import os
 from pathlib import Path
 
-from .sdk import DEFAULT_SCRYPT_N, init_keyring, load_keyring, open_file, send_file
+from .sdk import DEFAULT_SCRYPT_N, export_public_key_document, init_keyring, load_keyring, open_file, send_file
 
 
 def _read_password(password_env: str | None) -> str:
@@ -45,7 +44,11 @@ def _cmd_verify(args: argparse.Namespace) -> None:
 
 def _cmd_public_key(args: argparse.Namespace) -> None:
     keyring = load_keyring(args.keyring)
-    print(json.dumps(keyring.raw["publicWriteKey"], indent=2))
+    document = export_public_key_document(keyring)
+    if args.output:
+        document.write(args.output)
+        print(f"Public Key Document written: {args.output}")
+    print(f"Write Key ID: {document.key_id}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,8 +81,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--keyring", default="keyring.hxdl.json")
     verify.set_defaults(func=_cmd_verify)
 
-    public_key = subcommands.add_parser("public-key", help="print the public Write Key")
+    public_key = subcommands.add_parser("public-key", help="export the public Write Key")
     public_key.add_argument("--keyring", default="keyring.hxdl.json")
+    public_key.add_argument("--out", dest="output")
     public_key.set_defaults(func=_cmd_public_key)
 
     return parser

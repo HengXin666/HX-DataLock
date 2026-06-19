@@ -31,7 +31,7 @@ function usage() {
 Usage:
   node scripts/hx-datalock.mjs init [--out keyring.hxdl.json] [--password-env NAME] [--scrypt-n N]
   node scripts/hx-datalock.mjs verify-keyring [--keyring keyring.hxdl.json]
-  node scripts/hx-datalock.mjs public-key [--keyring keyring.hxdl.json]
+  node scripts/hx-datalock.mjs public-key [--keyring keyring.hxdl.json] [--out public-key.hxdl.json]
   node scripts/hx-datalock.mjs encrypt --in plain.bin --out sealed.hxdl.json [--keyring keyring.hxdl.json]
   node scripts/hx-datalock.mjs decrypt --in sealed.hxdl.json --out plain.bin [--keyring keyring.hxdl.json] [--password-env NAME]
 
@@ -128,11 +128,11 @@ function sha256Base64Url(buffer) {
 }
 
 function aadForKeyring(keyId) {
-  return Buffer.from(`${KEYRING_SCHEMA}:${keyId}`, 'utf8');
+  return Buffer.from(`${KEYRING_SCHEMA}:${keyId}:scrypt:AES-256-GCM`, 'utf8');
 }
 
 function aadForEnvelope(keyId) {
-  return Buffer.from(`${ENVELOPE_SCHEMA}:${keyId}`, 'utf8');
+  return Buffer.from(`${ENVELOPE_SCHEMA}:${keyId}:X25519:HKDF-SHA256:AES-256-GCM`, 'utf8');
 }
 
 function derivePasswordKey(password, kdf) {
@@ -255,7 +255,16 @@ function commandVerifyKeyring(options) {
 function commandPublicKey(options) {
   const keyring = readJson(getKeyringPath(options));
   assertKeyring(keyring);
-  console.log(JSON.stringify(keyring.publicWriteKey, null, 2));
+  const document = {
+    schema: 'hxdl.publicKey.v1',
+    createdAt: new Date().toISOString(),
+    publicWriteKey: keyring.publicWriteKey,
+  };
+  if (options.out) {
+    writeJson(options.out, document);
+    console.log(`Wrote Public Key Document: ${options.out}`);
+  }
+  console.log(`Write Key ID: ${keyring.publicWriteKey.keyId}`);
 }
 
 function loadPublicKey(keyring) {

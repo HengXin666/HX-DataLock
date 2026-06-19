@@ -1,23 +1,33 @@
 from .sdk import (
     DataEnvelope,
+    DataLockError,
+    DataLockErrorCode,
     Keyring,
+    PublicKeyDocument,
     create_keyring,
     decrypt_message,
     encrypt_message,
+    export_public_key_document,
     init_keyring,
     load_keyring,
+    make_v1_compatibility_manifest,
     open_file,
     send_file,
 )
 
 __all__ = [
     "DataEnvelope",
+    "DataLockError",
+    "DataLockErrorCode",
     "Keyring",
+    "PublicKeyDocument",
     "create_keyring",
     "decrypt_message",
     "encrypt_message",
+    "export_public_key_document",
     "init_keyring",
     "load_keyring",
+    "make_v1_compatibility_manifest",
     "open_file",
     "send_file",
 ]
