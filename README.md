@@ -49,17 +49,21 @@ sh scripts/hxdl-local.sh
 
 这个脚本适合 macOS、Linux、Git Bash 或 WSL。Windows PowerShell 下可以直接使用上面的 `uv run hxdl ...` 命令。
 
-把生成的 `keyring.hxdl.json` 提交到 GitHub 私有仓库。这个文件就是"可写不可读密钥包":
+把生成的 `keyring.hxdl.json` 提交到 GitHub 私有仓库。这个文件包含 `Write Key` 和被主密码包裹的 `Read Key`:
 
-- 可以给发送方用于加密。
-- 不能在不知道主密码的情况下解密数据。
+- 用户本地可以用它和主密码打开 `Data Envelope`。
+- 写入方不要使用完整 `Keyring`。先导出 `Public Key Document`, 再把该公开文档交给写入方。
+
+```powershell
+uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
+```
 
 ## 2. 发送方加密消息
 
-发送方只需要 `keyring.hxdl.json`, 不需要主密码:
+发送方只需要 `public.hxdl.json`, 不需要主密码:
 
 ```powershell
-uv run hxdl send --keyring keyring.hxdl.json --in message.txt --out message.hxdl.json
+uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.json
 ```
 
 输出的 `message.hxdl.json` 是 `Data Envelope`, 可以放到网盘、Cloudflare D1 或其他公共存储。
@@ -95,19 +99,38 @@ from hx_datalock import open_file
 open_file("keyring.hxdl.json", "message.hxdl.json", "message.txt", "你的高熵主密码")
 ```
 
-## Node CLI 互通
+## Node v1 CLI / SDK 互通
 
 Node CLI 和 Python SDK 使用同一种 `Keyring` / `Data Envelope` 格式, 因此可以交叉使用:
 
 ```powershell
-node scripts/hx-datalock.mjs encrypt --keyring keyring.hxdl.json --in message.txt --out message.hxdl.json
+node scripts/hx-datalock.mjs export-public --keyring keyring.hxdl.json --out public.hxdl.json
+node scripts/hx-datalock.mjs lock --public public.hxdl.json --in message.txt --out message.hxdl.json
 uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
 ```
 
 ```powershell
-uv run hxdl send --keyring keyring.hxdl.json --in message.txt --out message.hxdl.json
-node scripts/hx-datalock.mjs decrypt --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
+uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
+uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.json
+node scripts/hx-datalock.mjs open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
 ```
+
+Node 模块也导出 v1 SDK surface: `createKeyring`, `exportPublicKeyDocument`, `checkPasswordStrength`, `makeSenderDataLock`, `makeUserDataLock`, `DataEnvelope`, `Keyring`, `PublicKeyDocument` 和稳定 `DataLockErrorCode`。
+
+旧命令 `public-key`, `encrypt`, `decrypt` 不是 v1 CLI, 当前入口会提示改用 `export-public`, `lock`, `open`。
+
+## 性能与文件上限
+
+v1 只支持单个完整 `Full Data Envelope`, 本地文件助手拒绝超过 25 MB 的文件并返回 `OVERSIZED_FILE`。不支持 `Chunked File Envelope`, 流式 API, 100 MB, 1 GB 或 10 GB 性能承诺。
+
+本地复现基准:
+
+```powershell
+uv run hxdl bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
+node scripts/hx-datalock.mjs bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
+```
+
+基准输出为 JSON lines, 覆盖 `unlockKeyring`, `lockBytes`, `openBytes`, `lockFile`, `openFile`, 默认测量 1 MB, 10 MB 和 25 MB。输出用于本机观察, 不是硬性性能保证。
 
 ## GitHub Workflow
 
