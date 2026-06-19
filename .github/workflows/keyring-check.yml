@@ -1,0 +1,59 @@
+name: Keyring Check
+
+on:
+  push:
+    paths:
+      - "keyring.hxdl.json"
+      - "scripts/hx-datalock.mjs"
+      - "src/**"
+      - "examples/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/keyring-check.yml"
+  pull_request:
+    paths:
+      - "keyring.hxdl.json"
+      - "scripts/hx-datalock.mjs"
+      - "src/**"
+      - "examples/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/keyring-check.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-keyring:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+      - name: Validate committed Keyring
+        shell: bash
+        run: |
+          if [ ! -f keyring.hxdl.json ]; then
+            echo "No keyring.hxdl.json committed yet; run local init first."
+            exit 0
+          fi
+          node scripts/hx-datalock.mjs verify-keyring --keyring keyring.hxdl.json
+      - name: Ensure no obvious raw private key material is committed
+        shell: bash
+        run: |
+          if [ ! -f keyring.hxdl.json ]; then
+            exit 0
+          fi
+          if grep -E 'PRIVATE KEY|BEGIN|pkcs8|privateKey' keyring.hxdl.json; then
+            echo "keyring.hxdl.json appears to contain raw private key material."
+            exit 1
+          fi
+      - name: Run cross-language encryption tests
+        run: uv run pytest -q

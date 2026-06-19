@@ -1,0 +1,126 @@
+# HX-DataLock
+
+HX-DataLock 是一个"可写不可读"的通用加解密项目骨架。
+
+它把信任边界拆成三层:
+
+- GitHub 私有仓库: 存储 `Keyring`。里面有可公开的 `Write Key`, 以及被主密码加密包裹的 `Read Key`。
+- 公共存储: 网盘、Cloudflare D1 等, 只存储 `Data Envelope` 密文。
+- 用户本地: 用户输入主密码, 解封 `Read Key`, 再解密公共存储中的密文。
+
+最重要的一点: 主密码只在本地输入。GitHub Actions 只验证文件格式和跑互通测试, 不接触真实主密码。
+
+## 安全模型
+
+本项目目标是做到:
+
+- 泄露公共存储, 不泄露明文。
+- 泄露 GitHub 中的 `keyring.hxdl.json`, 攻击者只能拿到加密能力, 不能直接解密历史数据。
+- 拥有 `Write Key` 的发送方可以生成新密文, 但不能解密已有密文。
+- 用户本地拥有主密码时, 才能解封 `Read Key` 并读取数据。
+
+这不是"绝对安全"。如果主密码很弱, 攻击者拿到 `keyring.hxdl.json` 后可以离线猜密码。要保护高价值数据, 主密码必须是高熵长口令, 最好由密码管理器生成。
+
+## 密码学结构
+
+- `Write Key` / `Read Key`: X25519
+- 内容密钥派生: HKDF-SHA256
+- 内容加密: AES-256-GCM
+- 主密码派生: scrypt
+- `Read Key` 包裹: AES-256-GCM
+
+## 安装 Python SDK
+
+```powershell
+uv sync --dev
+```
+
+## 1. 本地生成 GitHub 存储的 Keyring
+
+```powershell
+uv run hxdl init --keyring keyring.hxdl.json
+```
+
+也可以使用本地交互脚本:
+
+```sh
+sh scripts/hxdl-local.sh
+```
+
+这个脚本适合 macOS、Linux、Git Bash 或 WSL。Windows PowerShell 下可以直接使用上面的 `uv run hxdl ...` 命令。
+
+把生成的 `keyring.hxdl.json` 提交到 GitHub 私有仓库。这个文件就是"可写不可读密钥包":
+
+- 可以给发送方用于加密。
+- 不能在不知道主密码的情况下解密数据。
+
+## 2. 发送方加密消息
+
+发送方只需要 `keyring.hxdl.json`, 不需要主密码:
+
+```powershell
+uv run hxdl send --keyring keyring.hxdl.json --in message.txt --out message.hxdl.json
+```
+
+输出的 `message.hxdl.json` 是 `Data Envelope`, 可以放到网盘、Cloudflare D1 或其他公共存储。
+
+业务代码也只需要调用文件级 API:
+
+```python
+from hx_datalock import send_file
+
+send_file("keyring.hxdl.json", "message.txt", "message.hxdl.json")
+```
+
+## 3. 用户本地解密消息
+
+解密方需要 `keyring.hxdl.json` 和主密码:
+
+```powershell
+uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
+```
+
+也可以通过环境变量传入主密码, 适合本地自动化:
+
+```powershell
+$env:HXDL_MASTER_PASSWORD="你的高熵主密码"
+uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
+```
+
+业务代码调用方式:
+
+```python
+from hx_datalock import open_file
+
+open_file("keyring.hxdl.json", "message.hxdl.json", "message.txt", "你的高熵主密码")
+```
+
+## Node CLI 互通
+
+Node CLI 和 Python SDK 使用同一种 `Keyring` / `Data Envelope` 格式, 因此可以交叉使用:
+
+```powershell
+node scripts/hx-datalock.mjs encrypt --keyring keyring.hxdl.json --in message.txt --out message.hxdl.json
+uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
+```
+
+```powershell
+uv run hxdl send --keyring keyring.hxdl.json --in message.txt --out message.hxdl.json
+node scripts/hx-datalock.mjs decrypt --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
+```
+
+## GitHub Workflow
+
+`.github/workflows/keyring-check.yml` 会做三件事:
+
+- 验证提交的 `keyring.hxdl.json` 格式正确。
+- 检查没有明显提交裸私钥。
+- 用 `uv run pytest -q` 运行 Python SDK 与 Node CLI 的双向互通测试。
+
+Workflow 使用测试密码生成临时测试 Keyring, 不会接触你的真实主密码。
+
+本地验证:
+
+```powershell
+uv run pytest -q
+```
