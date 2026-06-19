@@ -386,6 +386,15 @@ def test_user_datalock_reports_expected_open_failure_codes() -> None:
     assert utf8_exc.value.code is DataLockErrorCode.INVALID_UTF8
 
 
+def test_sdk_requires_explicit_master_password_even_when_environment_variable_exists(monkeypatch) -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    monkeypatch.setenv("HXDL_MASTER_PASSWORD", PASSWORD)
+
+    with pytest.raises(DataLockError) as exc_info:
+        makeUserDataLock(keyring, {})
+    assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+
+
 def test_user_datalock_file_helpers_write_outputs_and_enforce_v1_limit(tmp_path: Path) -> None:
     keyring = create_keyring(PASSWORD, scrypt_n=16384)
     user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
