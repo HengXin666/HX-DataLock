@@ -371,6 +371,116 @@ class SenderDataLock:
         return envelope
 
 
+@dataclass
+class UserDataLock:
+    keyring: Keyring
+    _read_key: x25519.X25519PrivateKey | None
+
+    def _require_open_read_key(self) -> x25519.X25519PrivateKey:
+        if self._read_key is None:
+            raise DataLockError(
+                DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING,
+                "User DataLock is closed",
+            )
+        return self._read_key
+
+    def openBytes(self, envelope: DataEnvelope) -> bytes:
+        read_key = self._require_open_read_key()
+        self.keyring.verify()
+        if isinstance(envelope, dict):
+            envelope = DataEnvelope(envelope)
+        if not isinstance(envelope, DataEnvelope):
+            raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "openBytes requires a Data Envelope")
+
+        raw = envelope.raw
+        envelope.verify()
+        if raw.get("recipientKeyId") != self.keyring.key_id:
+            raise DataLockError(
+                DataLockErrorCode.ENVELOPE_RECIPIENT_MISMATCH,
+                "Data Envelope recipient does not match the Keyring",
+            )
+
+        try:
+            loaded_public = serialization.load_der_public_key(
+                _envelope_b64(raw, "ephemeralPublicKey")
+            )
+        except DataLockError as exc:
+            raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Invalid Data Envelope public key") from exc
+        except Exception as exc:
+            raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Invalid Data Envelope public key") from exc
+        if not isinstance(loaded_public, x25519.X25519PublicKey):
+            raise DataLockError(
+                DataLockErrorCode.UNSUPPORTED_ALGORITHM,
+                "ephemeralPublicKey is not an X25519 public key",
+            )
+
+        shared_secret = read_key.exchange(loaded_public)
+        content_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=KEY_LENGTH,
+            salt=_envelope_b64(raw, "hkdfSalt"),
+            info=f"{ENVELOPE_SCHEMA}:{self.keyring.key_id}".encode("utf-8"),
+        ).derive(shared_secret)
+        try:
+            return AESGCM(content_key).decrypt(
+                _envelope_b64(raw, "nonce"),
+                _envelope_b64(raw, "ciphertext") + _envelope_b64(raw, "tag"),
+                _envelope_aad(self.keyring.key_id, raw["alg"]),
+            )
+        except InvalidTag as exc:
+            raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Ciphertext authentication failed") from exc
+
+    def openText(self, envelope: DataEnvelope) -> str:
+        try:
+            return self.openBytes(envelope).decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise DataLockError(DataLockErrorCode.INVALID_UTF8, "Data Envelope payload is not valid UTF-8") from exc
+
+    def openFile(self, input_path: str | Path, output_path: str | Path) -> bytes:
+        plaintext = self.openBytes(DataEnvelope.read(input_path))
+        if len(plaintext) > MAX_V1_FILE_BYTES:
+            raise DataLockError(
+                DataLockErrorCode.OVERSIZED_FILE,
+                "V1 Full Data Envelopes support local files up to 25 MB",
+            )
+        Path(output_path).write_bytes(plaintext)
+        return plaintext
+
+    def lockBytes(self, payload_bytes: bytes) -> DataEnvelope:
+        self._require_open_read_key()
+        if not isinstance(payload_bytes, bytes):
+            raise TypeError("payload_bytes must be bytes")
+        self.keyring.verify()
+        return _lock_bytes_with_public_key(
+            self.keyring.key_id,
+            self.keyring.public_write_key,
+            payload_bytes,
+        )
+
+    def lockText(self, text: str) -> DataEnvelope:
+        if not isinstance(text, str):
+            raise DataLockError(DataLockErrorCode.INVALID_UTF8, "lockText requires text input")
+        try:
+            payload_bytes = text.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as exc:
+            raise DataLockError(DataLockErrorCode.INVALID_UTF8, "Text is not valid UTF-8") from exc
+        return self.lockBytes(payload_bytes)
+
+    def lockFile(self, input_path: str | Path, output_path: str | Path) -> DataEnvelope:
+        input_file = Path(input_path)
+        if input_file.stat().st_size > MAX_V1_FILE_BYTES:
+            raise DataLockError(
+                DataLockErrorCode.OVERSIZED_FILE,
+                "V1 Full Data Envelopes support local files up to 25 MB",
+            )
+        envelope = self.lockBytes(input_file.read_bytes())
+        envelope.write(output_path)
+        return envelope
+
+    def close(self) -> None:
+        self._read_key = None
+
+
 def create_keyring(master_password: str, *, scrypt_n: int = DEFAULT_SCRYPT_N) -> Keyring:
     check_password_strength(master_password)
     _validate_scrypt_n(scrypt_n)
@@ -463,6 +573,21 @@ def makeSenderDataLock(publicKeyDocument: PublicKeyDocument) -> SenderDataLock:
         )
     publicKeyDocument.verify()
     return SenderDataLock(publicKeyDocument)
+
+
+def makeUserDataLock(keyring: Keyring | dict[str, Any], options: dict[str, Any]) -> UserDataLock:
+    if isinstance(keyring, dict):
+        keyring = Keyring(keyring)
+    if not isinstance(keyring, Keyring):
+        raise DataLockError(DataLockErrorCode.INVALID_KEYRING, "User DataLock requires a full Keyring")
+    if not isinstance(options, dict) or not isinstance(options.get("masterPassword"), str):
+        raise DataLockError(
+            DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING,
+            "User DataLock requires a Master Password",
+        )
+
+    read_key = keyring.unwrap_read_key(options["masterPassword"])
+    return UserDataLock(keyring, read_key)
 
 
 def make_v1_compatibility_manifest() -> dict[str, Any]:
@@ -579,43 +704,8 @@ def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
 
 
 def decrypt_message(keyring: Keyring, master_password: str, envelope: DataEnvelope) -> bytes:
-    keyring.verify()
-    raw = envelope.raw
-    envelope.verify()
-    if raw.get("recipientKeyId") != keyring.key_id:
-        raise DataLockError(
-            DataLockErrorCode.ENVELOPE_RECIPIENT_MISMATCH,
-            "Data Envelope recipient does not match the Keyring",
-        )
-
-    read_key = keyring.unwrap_read_key(master_password)
-    try:
-        loaded_public = serialization.load_der_public_key(
-            _envelope_b64(raw, "ephemeralPublicKey")
-        )
-    except DataLockError as exc:
-        raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Invalid Data Envelope public key") from exc
-    if not isinstance(loaded_public, x25519.X25519PublicKey):
-        raise DataLockError(
-            DataLockErrorCode.UNSUPPORTED_ALGORITHM,
-            "ephemeralPublicKey is not an X25519 public key",
-        )
-
-    shared_secret = read_key.exchange(loaded_public)
-    content_key = HKDF(
-        algorithm=hashes.SHA256(),
-        length=KEY_LENGTH,
-        salt=_envelope_b64(raw, "hkdfSalt"),
-        info=f"{ENVELOPE_SCHEMA}:{keyring.key_id}".encode("utf-8"),
-    ).derive(shared_secret)
-    try:
-        return AESGCM(content_key).decrypt(
-            _envelope_b64(raw, "nonce"),
-            _envelope_b64(raw, "ciphertext") + _envelope_b64(raw, "tag"),
-            _envelope_aad(keyring.key_id, raw["alg"]),
-        )
-    except InvalidTag as exc:
-        raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Ciphertext authentication failed") from exc
+    user = makeUserDataLock(keyring, {"masterPassword": master_password})
+    return user.openBytes(envelope)
 
 
 def send_file(keyring_path: str | Path, input_path: str | Path, output_path: str | Path) -> DataEnvelope:

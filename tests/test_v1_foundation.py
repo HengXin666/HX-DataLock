@@ -17,6 +17,7 @@ from hx_datalock import (
     make_v1_compatibility_manifest,
     load_keyring,
     PublicKeyDocument,
+    makeUserDataLock,
 )
 
 
@@ -335,3 +336,87 @@ def test_sender_datalock_lock_file_writes_envelope_and_enforces_v1_limit(tmp_pat
     with pytest.raises(DataLockError) as exc_info:
         sender.lockFile(oversized_path, tmp_path / "oversized.hxdl.json")
     assert exc_info.value.code is DataLockErrorCode.OVERSIZED_FILE
+
+
+def test_user_datalock_opens_and_locks_payloads_for_local_user() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    envelope = encrypt_message(keyring, b"user readable payload")
+
+    user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
+
+    assert user.openBytes(envelope) == b"user readable payload"
+    locally_locked = user.lockText("local user text")
+    assert user.openText(locally_locked) == "local user text"
+    assert decrypt_message(keyring, PASSWORD, locally_locked) == b"local user text"
+
+    user.close()
+    with pytest.raises(DataLockError) as exc_info:
+        user.openBytes(envelope)
+    assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+
+
+def test_user_datalock_reports_expected_open_failure_codes() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    other_keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
+
+    with pytest.raises(DataLockError) as wrong_password_exc:
+        makeUserDataLock(keyring, {"masterPassword": "wrong master password"})
+    assert wrong_password_exc.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+
+    with pytest.raises(DataLockError) as mismatch_exc:
+        user.openBytes(encrypt_message(other_keyring, b"for another recipient"))
+    assert mismatch_exc.value.code is DataLockErrorCode.ENVELOPE_RECIPIENT_MISMATCH
+
+    envelope = user.lockBytes(b"tamper target")
+    with pytest.raises(DataLockError) as tampered_exc:
+        user.openBytes(
+            DataEnvelope(
+                {
+                    **envelope.raw,
+                    "ciphertext": envelope.raw["ciphertext"][:-4] + "AAAA",
+                }
+            )
+        )
+    assert tampered_exc.value.code is DataLockErrorCode.TAMPERED_ENVELOPE
+
+    invalid_utf8 = user.lockBytes(b"\xff")
+    with pytest.raises(DataLockError) as utf8_exc:
+        user.openText(invalid_utf8)
+    assert utf8_exc.value.code is DataLockErrorCode.INVALID_UTF8
+
+
+def test_user_datalock_file_helpers_write_outputs_and_enforce_v1_limit(tmp_path: Path) -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
+    input_path = tmp_path / "payload.bin"
+    envelope_path = tmp_path / "payload.hxdl.json"
+    output_path = tmp_path / "opened.bin"
+
+    input_path.write_bytes(b"user file payload")
+    envelope = user.lockFile(input_path, envelope_path)
+    plaintext = user.openFile(envelope_path, output_path)
+
+    assert decrypt_message(keyring, PASSWORD, envelope) == b"user file payload"
+    assert plaintext == b"user file payload"
+    assert output_path.read_bytes() == b"user file payload"
+
+    oversized_path = tmp_path / "oversized.bin"
+    with oversized_path.open("wb") as oversized_file:
+        oversized_file.truncate(25 * 1024 * 1024 + 1)
+    with pytest.raises(DataLockError) as lock_exc:
+        user.lockFile(oversized_path, tmp_path / "oversized.hxdl.json")
+    assert lock_exc.value.code is DataLockErrorCode.OVERSIZED_FILE
+
+    exact_limit_envelope = user.lockBytes(b"x" * (25 * 1024 * 1024))
+    exact_limit_envelope_path = tmp_path / "exact-limit.hxdl.json"
+    exact_limit_output_path = tmp_path / "exact-limit.out"
+    exact_limit_envelope.write(exact_limit_envelope_path)
+    assert user.openFile(exact_limit_envelope_path, exact_limit_output_path) == b"x" * (25 * 1024 * 1024)
+
+    oversized_envelope = encrypt_message(keyring, b"x" * (25 * 1024 * 1024 + 1))
+    oversized_envelope_path = tmp_path / "oversized-envelope.hxdl.json"
+    oversized_envelope.write(oversized_envelope_path)
+    with pytest.raises(DataLockError) as oversized_payload_exc:
+        user.openFile(oversized_envelope_path, tmp_path / "oversized-payload.out")
+    assert oversized_payload_exc.value.code is DataLockErrorCode.OVERSIZED_FILE
