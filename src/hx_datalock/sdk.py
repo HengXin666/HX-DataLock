@@ -30,6 +30,7 @@ ENVELOPE_ALG = {
     "kdf": "HKDF-SHA256",
     "aead": "AES-256-GCM",
 }
+MAX_V1_FILE_BYTES = 25 * 1024 * 1024
 
 
 class PasswordStrengthReport(TypedDict, total=False):
@@ -335,6 +336,41 @@ class PublicKeyDocument:
         return document
 
 
+@dataclass(frozen=True)
+class SenderDataLock:
+    public_key_document: PublicKeyDocument
+
+    def lockBytes(self, payload_bytes: bytes) -> DataEnvelope:
+        if not isinstance(payload_bytes, bytes):
+            raise TypeError("payload_bytes must be bytes")
+        self.public_key_document.verify()
+        return _lock_bytes_with_public_key(
+            self.public_key_document.key_id,
+            self.public_key_document.public_write_key,
+            payload_bytes,
+        )
+
+    def lockText(self, text: str) -> DataEnvelope:
+        if not isinstance(text, str):
+            raise DataLockError(DataLockErrorCode.INVALID_UTF8, "lockText requires text input")
+        try:
+            payload_bytes = text.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as exc:
+            raise DataLockError(DataLockErrorCode.INVALID_UTF8, "Text is not valid UTF-8") from exc
+        return self.lockBytes(payload_bytes)
+
+    def lockFile(self, input_path: str | Path, output_path: str | Path) -> DataEnvelope:
+        input_file = Path(input_path)
+        if input_file.stat().st_size > MAX_V1_FILE_BYTES:
+            raise DataLockError(
+                DataLockErrorCode.OVERSIZED_FILE,
+                "V1 Full Data Envelopes support local files up to 25 MB",
+            )
+        envelope = self.lockBytes(input_file.read_bytes())
+        envelope.write(output_path)
+        return envelope
+
+
 def create_keyring(master_password: str, *, scrypt_n: int = DEFAULT_SCRYPT_N) -> Keyring:
     check_password_strength(master_password)
     _validate_scrypt_n(scrypt_n)
@@ -410,6 +446,25 @@ def export_public_key_document(keyring: Keyring) -> PublicKeyDocument:
     return document
 
 
+def makeSenderDataLock(publicKeyDocument: PublicKeyDocument) -> SenderDataLock:
+    if isinstance(publicKeyDocument, Keyring) or (
+        isinstance(publicKeyDocument, dict) and publicKeyDocument.get("schema") == KEYRING_SCHEMA
+    ):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
+            "Sender DataLock requires a Public Key Document, not a full Keyring",
+        )
+    if isinstance(publicKeyDocument, dict):
+        publicKeyDocument = PublicKeyDocument(publicKeyDocument)
+    if not isinstance(publicKeyDocument, PublicKeyDocument):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
+            "Sender DataLock requires a Public Key Document",
+        )
+    publicKeyDocument.verify()
+    return SenderDataLock(publicKeyDocument)
+
+
 def make_v1_compatibility_manifest() -> dict[str, Any]:
     return {
         "schema": "hxdl.compatibilityManifest.v1",
@@ -482,19 +537,22 @@ def make_v1_compatibility_manifest() -> dict[str, Any]:
     }
 
 
-def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
-    keyring.verify()
+def _lock_bytes_with_public_key(
+    key_id: str,
+    public_write_key: x25519.X25519PublicKey,
+    payload_bytes: bytes,
+) -> DataEnvelope:
     ephemeral_private = x25519.X25519PrivateKey.generate()
-    shared_secret = ephemeral_private.exchange(keyring.public_write_key)
+    shared_secret = ephemeral_private.exchange(public_write_key)
     hkdf_salt = secrets.token_bytes(32)
     content_key = HKDF(
         algorithm=hashes.SHA256(),
         length=KEY_LENGTH,
         salt=hkdf_salt,
-        info=f"{ENVELOPE_SCHEMA}:{keyring.key_id}".encode("utf-8"),
+        info=f"{ENVELOPE_SCHEMA}:{key_id}".encode("utf-8"),
     ).derive(shared_secret)
     nonce = secrets.token_bytes(12)
-    encrypted = AESGCM(content_key).encrypt(nonce, plaintext, _envelope_aad(keyring.key_id))
+    encrypted = AESGCM(content_key).encrypt(nonce, payload_bytes, _envelope_aad(key_id))
     ephemeral_public_der = ephemeral_private.public_key().public_bytes(
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -504,7 +562,7 @@ def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
         {
             "schema": ENVELOPE_SCHEMA,
             "createdAt": _utc_now(),
-            "recipientKeyId": keyring.key_id,
+            "recipientKeyId": key_id,
             "alg": ENVELOPE_ALG.copy(),
             "ephemeralPublicKey": _b64(ephemeral_public_der),
             "hkdfSalt": _b64(hkdf_salt),
@@ -513,6 +571,11 @@ def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
             "ciphertext": _b64(encrypted[:-16]),
         }
     )
+
+
+def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
+    keyring.verify()
+    return _lock_bytes_with_public_key(keyring.key_id, keyring.public_write_key, plaintext)
 
 
 def decrypt_message(keyring: Keyring, master_password: str, envelope: DataEnvelope) -> bytes:

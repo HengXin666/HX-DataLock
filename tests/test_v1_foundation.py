@@ -13,6 +13,7 @@ from hx_datalock import (
     decrypt_message,
     encrypt_message,
     export_public_key_document,
+    makeSenderDataLock,
     make_v1_compatibility_manifest,
     load_keyring,
     PublicKeyDocument,
@@ -250,3 +251,87 @@ def test_v1_compatibility_fixture_manifest_describes_cross_language_cases() -> N
                 DataLockErrorCode.UNSUPPORTED_SCHEMA,
                 DataLockErrorCode.UNSUPPORTED_ALGORITHM,
             } <= {DataLockErrorCode(item["expectedCode"]) for item in case["expectations"]}
+
+
+def test_sender_datalock_locks_bytes_from_public_key_document_only() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    public_key_document = export_public_key_document(keyring)
+
+    sender = makeSenderDataLock(public_key_document)
+    envelope = sender.lockBytes(b"write-only sender payload")
+
+    assert envelope.raw["schema"] == "hxdl.envelope.v1"
+    assert envelope.raw["recipientKeyId"] == keyring.key_id
+    assert decrypt_message(keyring, PASSWORD, envelope) == b"write-only sender payload"
+    assert not hasattr(sender, "openBytes")
+    assert not hasattr(sender, "unwrap_read_key")
+
+
+def test_sender_datalock_envelope_aad_does_not_bind_creation_time() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    sender = makeSenderDataLock(export_public_key_document(keyring))
+
+    envelope = sender.lockBytes(b"creation time is display metadata")
+    envelope_with_changed_creation_time = DataEnvelope(
+        {
+            **envelope.raw,
+            "createdAt": "2000-01-01T00:00:00.000Z",
+        }
+    )
+
+    assert (
+        decrypt_message(keyring, PASSWORD, envelope_with_changed_creation_time)
+        == b"creation time is display metadata"
+    )
+
+
+def test_sender_datalock_rejects_keyrings_and_invalid_public_key_documents() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    public_key_document = export_public_key_document(keyring)
+
+    with pytest.raises(DataLockError) as keyring_exc:
+        makeSenderDataLock(keyring)
+    assert keyring_exc.value.code is DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
+
+    with pytest.raises(DataLockError) as public_doc_exc:
+        makeSenderDataLock(
+            PublicKeyDocument(
+                {
+                    **public_key_document.raw,
+                    "encryptedReadKey": keyring.raw["encryptedReadKey"],
+                }
+            )
+        )
+    assert public_doc_exc.value.code is DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
+
+
+def test_sender_datalock_lock_text_uses_strict_utf8() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    sender = makeSenderDataLock(export_public_key_document(keyring))
+
+    envelope = sender.lockText("HX DataLock 文本")
+    assert decrypt_message(keyring, PASSWORD, envelope) == "HX DataLock 文本".encode("utf-8")
+
+    with pytest.raises(DataLockError) as exc_info:
+        sender.lockText("bad surrogate \ud800")
+    assert exc_info.value.code is DataLockErrorCode.INVALID_UTF8
+
+
+def test_sender_datalock_lock_file_writes_envelope_and_enforces_v1_limit(tmp_path: Path) -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    sender = makeSenderDataLock(export_public_key_document(keyring))
+    input_path = tmp_path / "payload.bin"
+    envelope_path = tmp_path / "payload.hxdl.json"
+
+    input_path.write_bytes(b"sender file payload")
+    envelope = sender.lockFile(input_path, envelope_path)
+
+    assert decrypt_message(keyring, PASSWORD, envelope) == b"sender file payload"
+    assert decrypt_message(keyring, PASSWORD, DataEnvelope.read(envelope_path)) == b"sender file payload"
+
+    oversized_path = tmp_path / "oversized.bin"
+    with oversized_path.open("wb") as oversized_file:
+        oversized_file.truncate(25 * 1024 * 1024 + 1)
+    with pytest.raises(DataLockError) as exc_info:
+        sender.lockFile(oversized_path, tmp_path / "oversized.hxdl.json")
+    assert exc_info.value.code is DataLockErrorCode.OVERSIZED_FILE
