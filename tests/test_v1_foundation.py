@@ -8,6 +8,7 @@ from hx_datalock import (
     DataLockError,
     DataLockErrorCode,
     Keyring,
+    check_password_strength,
     create_keyring,
     decrypt_message,
     encrypt_message,
@@ -19,6 +20,74 @@ from hx_datalock import (
 
 
 PASSWORD = "correct horse battery staple for hx datalock"
+
+
+def test_password_strength_report_warns_but_does_not_block_weak_passwords() -> None:
+    weak_report = check_password_strength("password")
+    assert weak_report["allowed"] is True
+    assert weak_report["level"] == "weak"
+    assert weak_report["warnings"]
+    assert weak_report["suggestions"]
+
+    strong_report = check_password_strength("correct horse battery staple for hx datalock")
+    assert strong_report["allowed"] is True
+    assert strong_report["level"] in {"good", "strong"}
+    assert strong_report["warnings"] == []
+
+    keyring = create_keyring("password", scrypt_n=16384)
+    assert keyring.raw["schema"] == "hxdl.keyring.v1"
+
+
+def test_master_password_uses_nfc_normalization_for_unlock() -> None:
+    decomposed_password = "Cafe\u0301 passphrase for hx datalock"
+    composed_password = "Caf\u00e9 passphrase for hx datalock"
+
+    keyring = create_keyring(decomposed_password, scrypt_n=16384)
+    envelope = encrypt_message(keyring, b"nfc unlock")
+
+    assert decrypt_message(keyring, composed_password, envelope) == b"nfc unlock"
+
+
+def test_malformed_keyrings_and_public_key_documents_use_stable_error_codes() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    public_key_document = export_public_key_document(keyring)
+
+    with pytest.raises(DataLockError) as keyring_exc:
+        Keyring(
+            {
+                **keyring.raw,
+                "encryptedReadKey": {
+                    **keyring.raw["encryptedReadKey"],
+                    "kdf": {**keyring.raw["encryptedReadKey"]["kdf"], "salt": "not base64"},
+                },
+            }
+        ).unwrap_read_key(PASSWORD)
+    assert keyring_exc.value.code is DataLockErrorCode.INVALID_KEYRING
+
+    with pytest.raises(DataLockError) as public_key_exc:
+        PublicKeyDocument(
+            {
+                **public_key_document.raw,
+                "publicWriteKey": {
+                    **public_key_document.raw["publicWriteKey"],
+                    "spki": "not base64",
+                },
+            }
+        ).verify()
+    assert public_key_exc.value.code is DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
+
+
+def test_malformed_data_envelope_uses_tampered_envelope_error_code() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    envelope = encrypt_message(keyring, b"malformed envelope")
+
+    with pytest.raises(DataLockError) as envelope_exc:
+        decrypt_message(
+            keyring,
+            PASSWORD,
+            DataEnvelope({**envelope.raw, "hkdfSalt": "not base64"}),
+        )
+    assert envelope_exc.value.code is DataLockErrorCode.TAMPERED_ENVELOPE
 
 
 def test_v1_documents_write_stable_json_and_read_by_field(tmp_path: Path) -> None:

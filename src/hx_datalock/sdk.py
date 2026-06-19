@@ -4,11 +4,12 @@ import base64
 import hashlib
 import json
 import secrets
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
@@ -29,6 +30,14 @@ ENVELOPE_ALG = {
     "kdf": "HKDF-SHA256",
     "aead": "AES-256-GCM",
 }
+
+
+class PasswordStrengthReport(TypedDict, total=False):
+    level: Literal["weak", "fair", "good", "strong"]
+    allowed: bool
+    warnings: list[str]
+    suggestions: list[str]
+    estimatedEntropyBits: float
 
 
 class DataLockErrorCode(StrEnum):
@@ -53,13 +62,18 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _from_b64(value: str, field: str) -> bytes:
+def _from_b64(
+    value: str,
+    field: str,
+    *,
+    error_code: DataLockErrorCode = DataLockErrorCode.INVALID_KEYRING,
+) -> bytes:
     if not isinstance(value, str):
-        raise DataLockError(DataLockErrorCode.INVALID_KEYRING, f"Missing or invalid base64 field: {field}")
+        raise DataLockError(error_code, f"Missing or invalid base64 field: {field}")
     try:
         return base64.b64decode(value, validate=True)
     except ValueError as exc:
-        raise DataLockError(DataLockErrorCode.INVALID_KEYRING, f"Missing or invalid base64 field: {field}") from exc
+        raise DataLockError(error_code, f"Missing or invalid base64 field: {field}") from exc
 
 
 def _sha256_base64url(data: bytes) -> str:
@@ -88,13 +102,14 @@ def _derive_password_key(master_password: str, kdf: dict[str, Any]) -> bytes:
             DataLockErrorCode.UNSUPPORTED_ALGORITHM,
             f"Unsupported password KDF: {kdf.get('name')}",
         )
+    normalized_password = unicodedata.normalize("NFC", master_password)
     return Scrypt(
         salt=_from_b64(kdf["salt"], "encryptedReadKey.kdf.salt"),
         length=int(kdf.get("keyLength", KEY_LENGTH)),
         n=int(kdf["N"]),
         r=int(kdf["r"]),
         p=int(kdf["p"]),
-    ).derive(master_password.encode("utf-8"))
+    ).derive(normalized_password.encode("utf-8"))
 
 
 def _validate_scrypt_n(value: int) -> None:
@@ -113,7 +128,11 @@ def _validate_public_write_key(raw: dict[str, Any], *, error_code: DataLockError
         )
 
     try:
-        public_der = _from_b64(public_write_key["spki"], "publicWriteKey.spki")
+        public_der = _from_b64(
+            public_write_key["spki"],
+            "publicWriteKey.spki",
+            error_code=error_code,
+        )
         expected_key_id = f"x25519:{_sha256_base64url(public_der)[:22]}"
         if not secrets.compare_digest(public_write_key["keyId"], expected_key_id):
             raise DataLockError(error_code, "keyId does not match the Write Key")
@@ -137,6 +156,47 @@ def _validate_envelope_alg(raw: dict[str, Any]) -> None:
             DataLockErrorCode.UNSUPPORTED_ALGORITHM,
             "Data Envelope must use X25519, HKDF-SHA256, and AES-256-GCM",
         )
+
+
+def _envelope_b64(raw: dict[str, Any], field: str) -> bytes:
+    return _from_b64(raw[field], field, error_code=DataLockErrorCode.TAMPERED_ENVELOPE)
+
+
+def check_password_strength(master_password: str) -> PasswordStrengthReport:
+    unique_chars = len(set(master_password))
+    estimated_entropy = min(128.0, round(len(master_password) * 3.0 + unique_chars * 1.5, 1))
+    warnings: list[str] = []
+    suggestions: list[str] = []
+
+    common_passwords = {"password", "123456", "qwerty", "admin", "letmein"}
+    lower_password = master_password.lower()
+    if len(master_password) < 12:
+        warnings.append("Master Password is short.")
+        suggestions.append("Use a longer passphrase.")
+    if lower_password in common_passwords:
+        warnings.append("Master Password is a commonly used password.")
+        suggestions.append("Avoid common passwords.")
+    if unique_chars <= 4 and len(master_password) >= 8:
+        warnings.append("Master Password uses too little character variety.")
+        suggestions.append("Use several unrelated words or more varied characters.")
+
+    if warnings:
+        level: Literal["weak", "fair", "good", "strong"] = "weak"
+    elif len(master_password) >= 32 and unique_chars >= 12:
+        level = "strong"
+    elif len(master_password) >= 20 and unique_chars >= 10:
+        level = "good"
+    else:
+        level = "fair"
+
+    report: PasswordStrengthReport = {
+        "level": level,
+        "allowed": True,
+        "warnings": warnings,
+        "suggestions": suggestions,
+        "estimatedEntropyBits": estimated_entropy,
+    }
+    return report
 
 
 @dataclass(frozen=True)
@@ -276,8 +336,7 @@ class PublicKeyDocument:
 
 
 def create_keyring(master_password: str, *, scrypt_n: int = DEFAULT_SCRYPT_N) -> Keyring:
-    if len(master_password) < 16:
-        raise ValueError("Master password must be at least 16 characters")
+    check_password_strength(master_password)
     _validate_scrypt_n(scrypt_n)
 
     private_key = x25519.X25519PrivateKey.generate()
@@ -469,7 +528,7 @@ def decrypt_message(keyring: Keyring, master_password: str, envelope: DataEnvelo
     read_key = keyring.unwrap_read_key(master_password)
     try:
         loaded_public = serialization.load_der_public_key(
-            _from_b64(raw["ephemeralPublicKey"], "ephemeralPublicKey")
+            _envelope_b64(raw, "ephemeralPublicKey")
         )
     except DataLockError as exc:
         raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Invalid Data Envelope public key") from exc
@@ -483,13 +542,13 @@ def decrypt_message(keyring: Keyring, master_password: str, envelope: DataEnvelo
     content_key = HKDF(
         algorithm=hashes.SHA256(),
         length=KEY_LENGTH,
-        salt=_from_b64(raw["hkdfSalt"], "hkdfSalt"),
+        salt=_envelope_b64(raw, "hkdfSalt"),
         info=f"{ENVELOPE_SCHEMA}:{keyring.key_id}".encode("utf-8"),
     ).derive(shared_secret)
     try:
         return AESGCM(content_key).decrypt(
-            _from_b64(raw["nonce"], "nonce"),
-            _from_b64(raw["ciphertext"], "ciphertext") + _from_b64(raw["tag"], "tag"),
+            _envelope_b64(raw, "nonce"),
+            _envelope_b64(raw, "ciphertext") + _envelope_b64(raw, "tag"),
             _envelope_aad(keyring.key_id, raw["alg"]),
         )
     except InvalidTag as exc:
