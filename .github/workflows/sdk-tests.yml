@@ -5,6 +5,7 @@ on:
     paths:
       - "sdk/node/**"
       - "sdk/py/**"
+      - "examples/**"
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
@@ -13,6 +14,7 @@ on:
     paths:
       - "sdk/node/**"
       - "sdk/py/**"
+      - "examples/**"
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
@@ -46,6 +48,12 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
+      - name: Install Node SDK dependencies
+        working-directory: sdk/node
+        run: npm ci
+      - name: Build Node SDK
+        working-directory: sdk/node
+        run: npm run build
       - name: Run Node SDK surface tests
         run: |
           uv run pytest tests/compat/test_cross_language.py::test_node_sdk_exposes_v1_datalock_surface -q
@@ -66,3 +74,19 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Run cross-SDK compatibility tests
         run: uv run pytest tests/compat/test_cross_language.py -q
+
+  sdk-examples:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+      - name: Run SDK example tests
+        run: uv run pytest tests/examples/test_sdk_examples.py -q

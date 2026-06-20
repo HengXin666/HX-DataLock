@@ -10,10 +10,14 @@ def test_sdk_tests_workflow_runs_each_available_sdk_test_suite() -> None:
     assert "python-sdk-tests:" in text
     assert "node-sdk-tests:" in text
     assert "cross-sdk-compatibility:" in text
+    assert "sdk-examples:" in text
+    assert '"examples/**"' in text
     assert "uv run pytest tests/py/test_v1_foundation.py -q" in text
+    assert "npm ci" in text
+    assert "npm run build" in text
     assert (
         "uv run pytest tests/compat/test_cross_language.py::test_node_sdk_exposes_v1_datalock_surface"
         in text
     )
     assert "uv run pytest tests/compat/test_cross_language.py -q" in text
-
+    assert "uv run pytest tests/examples/test_sdk_examples.py -q" in text

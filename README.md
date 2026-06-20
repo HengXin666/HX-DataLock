@@ -82,9 +82,10 @@ uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.j
 业务代码也只需要调用文件级 API:
 
 ```python
-from hx_datalock import send_file
+from hx_datalock import PublicKeyDocument, makeSenderDataLock
 
-send_file("keyring.hxdl.json", "message.txt", "message.hxdl.json")
+sender = makeSenderDataLock(PublicKeyDocument.read("public.hxdl.json"))
+sender.lockFile("message.txt", "message.hxdl.json")
 ```
 
 ## 3. 用户本地解密消息
