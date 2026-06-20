@@ -24,7 +24,7 @@ def test_sdk_tests_workflow_runs_each_available_sdk_test_suite() -> None:
     )
     assert "uv run pytest tests/compat/test_cross_language.py -q" in text
     assert "gradle test" in text
-    assert "uv run pytest tests/knolin/test_knolin_sdk.py -q" in text
+    assert "uv run pytest tests/kotlin/test_kotlin_sdk.py -q" in text
     assert "uv run pytest tests/examples/test_sdk_examples.py -q" in text
     assert text.count("npm ci") == 3
     assert text.count("npm run build") == 3

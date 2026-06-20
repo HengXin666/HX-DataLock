@@ -90,7 +90,7 @@ class HxDataLockTest {
 
     @Test
     fun v1ScopeDoesNotExposeSenderDataLock() {
-        val publicMembers = HxDataLock::class.members.map { it.name }.toSet()
+        val publicMembers = HxDataLock::class.java.methods.map { it.name }.toSet()
 
         assertFalse(publicMembers.contains("makeSenderDataLock"))
     }

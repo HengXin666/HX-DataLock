@@ -118,7 +118,7 @@ jobs:
         with:
           gradle-version: "8.14.2"
       - name: Run kotlin cross-SDK tests
-        run: uv run pytest tests/knolin/test_knolin_sdk.py -q
+        run: uv run pytest tests/kotlin/test_kotlin_sdk.py -q
 
   sdk-examples:
     runs-on: ubuntu-latest
