@@ -1,7 +1,10 @@
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from hx_datalock import (
     DataEnvelope,
@@ -14,6 +17,141 @@ from hx_datalock import (
     open_file,
     send_file,
 )
+
+PASSWORD = "correct horse battery staple for hx datalock"
+
+
+def _python_cli() -> list[str]:
+    return [sys.executable, "-m", "hx_datalock.cli"]
+
+
+def _node_cli() -> list[str]:
+    return ["node", "sdk/node/hx-datalock.mjs"]
+
+
+def _kotlin_example(task: str, keyring_path: Path, input_path: Path, output_path: Path) -> list[str]:
+    return [
+        "gradle",
+        task,
+        "--quiet",
+        f"-PexampleArgs={keyring_path}|{input_path}|{output_path}|{PASSWORD}",
+    ]
+
+
+def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None:
+    if shutil.which("gradle") is None:
+        pytest.skip("gradle is required to prove Kotlin interoperability")
+
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    public_path = tmp_path / "public.hxdl.json"
+    env = os.environ | {"HXDL_TEST_PASSWORD": PASSWORD}
+
+    subprocess.run(
+        [
+            *_python_cli(),
+            "init",
+            "--keyring",
+            str(keyring_path),
+            "--password-env",
+            "HXDL_TEST_PASSWORD",
+            "--scrypt-n",
+            "16384",
+        ],
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        [*_python_cli(), "export-public", "--keyring", str(keyring_path), "--out", str(public_path)],
+        check=True,
+    )
+
+    lock_commands = {
+        "python": lambda plain_path, envelope_path: subprocess.run(
+            [
+                *_python_cli(),
+                "lock",
+                "--public",
+                str(public_path),
+                "--in",
+                str(plain_path),
+                "--out",
+                str(envelope_path),
+            ],
+            check=True,
+        ),
+        "node": lambda plain_path, envelope_path: subprocess.run(
+            [
+                *_node_cli(),
+                "lock",
+                "--public",
+                str(public_path),
+                "--in",
+                str(plain_path),
+                "--out",
+                str(envelope_path),
+            ],
+            check=True,
+        ),
+        "kotlin": lambda plain_path, envelope_path: subprocess.run(
+            _kotlin_example("runLockExample", keyring_path, plain_path, envelope_path),
+            cwd=Path("sdk/kotlin"),
+            check=True,
+        ),
+    }
+    open_commands = {
+        "python": lambda envelope_path, opened_path: subprocess.run(
+            [
+                *_python_cli(),
+                "open",
+                "--keyring",
+                str(keyring_path),
+                "--in",
+                str(envelope_path),
+                "--out",
+                str(opened_path),
+                "--password-env",
+                "HXDL_TEST_PASSWORD",
+            ],
+            check=True,
+            env=env,
+        ),
+        "node": lambda envelope_path, opened_path: subprocess.run(
+            [
+                *_node_cli(),
+                "open",
+                "--keyring",
+                str(keyring_path),
+                "--in",
+                str(envelope_path),
+                "--out",
+                str(opened_path),
+                "--password-env",
+                "HXDL_TEST_PASSWORD",
+            ],
+            check=True,
+            env=env,
+        ),
+        "kotlin": lambda envelope_path, opened_path: subprocess.run(
+            _kotlin_example("runOpenExample", keyring_path, envelope_path, opened_path),
+            cwd=Path("sdk/kotlin"),
+            check=True,
+        ),
+    }
+
+    for locker_name, lock in lock_commands.items():
+        plain_path = tmp_path / f"{locker_name}.txt"
+        envelope_path = tmp_path / f"{locker_name}.hxdl.json"
+        payload = f"{locker_name} SDK 加密, 所有 SDK 解密".encode("utf-8")
+        plain_path.write_bytes(payload)
+
+        lock(plain_path, envelope_path)
+
+        for opener_name, open_ in open_commands.items():
+            opened_path = tmp_path / f"{locker_name}-to-{opener_name}.txt"
+
+            open_(envelope_path, opened_path)
+
+            assert opened_path.read_bytes() == payload
 
 
 def test_python_encrypts_and_node_decrypts(tmp_path: Path) -> None:

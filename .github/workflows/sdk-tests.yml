@@ -1,4 +1,4 @@
-name: SDK Tests
+name: SDK 测试与兼容性证明
 
 on:
   push:
@@ -25,6 +25,7 @@ on:
 
 jobs:
   python-sdk-tests:
+    name: Python SDK 测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,10 +35,11 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
-      - name: Run Python SDK tests
+      - name: 运行 Python SDK 测试
         run: uv run pytest tests/py/test_v1_foundation.py -q
 
   node-sdk-tests:
+    name: Node SDK 测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,18 +52,19 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
-      - name: Install Node SDK dependencies
+      - name: 安装 Node SDK 依赖
         working-directory: sdk/node
         run: npm ci
-      - name: Build Node SDK
+      - name: 构建 Node SDK
         working-directory: sdk/node
         run: npm run build
-      - name: Run Node SDK surface tests
+      - name: 运行 Node SDK 接口测试
         run: |
           uv run pytest tests/compat/test_cross_language.py::test_node_sdk_exposes_v1_datalock_surface -q
           uv run pytest tests/compat/test_cross_language.py::test_node_sdk_open_text_reports_invalid_utf8_with_stable_error_code -q
 
   cross-sdk-compatibility:
+    name: 跨 SDK 兼容性测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,16 +77,47 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
-      - name: Install Node SDK dependencies
+      - name: 安装 Node SDK 依赖
         working-directory: sdk/node
         run: npm ci
-      - name: Build Node SDK
+      - name: 构建 Node SDK
         working-directory: sdk/node
         run: npm run build
-      - name: Run cross-SDK compatibility tests
+      - name: 运行跨 SDK 兼容性测试
         run: uv run pytest tests/compat/test_cross_language.py -q
 
+  prove-sdk-interoperability:
+    name: 各 SDK 互操作证明
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - uses: astral-sh/setup-uv@v5
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.2"
+      - name: 安装 Node SDK 依赖
+        working-directory: sdk/node
+        run: npm ci
+      - name: 构建 Node SDK
+        working-directory: sdk/node
+        run: npm run build
+      - name: 证明各 SDK 可互相打开加密数据
+        run: uv run pytest tests/compat/test_cross_language.py::test_each_sdk_can_open_envelopes_locked_by_every_sdk -q
+
   kotlin-sdk-tests:
+    name: Kotlin SDK 测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -96,11 +130,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14.2"
-      - name: Run kotlin SDK tests
+      - name: 运行 Kotlin SDK 测试
         working-directory: sdk/kotlin
         run: gradle test
 
   kotlin-cross-sdk-compatibility:
+    name: Kotlin 跨 SDK 兼容性测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,10 +152,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14.2"
-      - name: Run kotlin cross-SDK tests
+      - name: 运行 Kotlin 跨 SDK 测试
         run: uv run pytest tests/kotlin/test_kotlin_sdk.py -q
 
   sdk-examples:
+    name: SDK 示例测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -133,11 +169,11 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
-      - name: Install Node SDK dependencies
+      - name: 安装 Node SDK 依赖
         working-directory: sdk/node
         run: npm ci
-      - name: Build Node SDK
+      - name: 构建 Node SDK
         working-directory: sdk/node
         run: npm run build
-      - name: Run SDK example tests
+      - name: 运行 SDK 示例测试
         run: uv run pytest tests/examples/test_sdk_examples.py -q
