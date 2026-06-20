@@ -38,7 +38,7 @@ uv sync --dev
 ## 仓库布局
 
 - `sdk/py/`: Python SDK 和 CLI 包源码。
-- `sdk/node/`: 当前 Node JavaScript SDK / CLI 入口。它不是 TypeScript 项目。
+- `sdk/node/`: Node TypeScript SDK / CLI 源码。`src/index.ts` 是简洁 SDK 入口, `hx-datalock.mjs` 保留为兼容 CLI / ESM 入口。
 - `examples/py/`: Python 使用示例。
 - `tests/py/`: Python SDK / CLI 测试。
 - `tests/compat/`: Python 与 Node 的跨 SDK 兼容测试。
@@ -126,7 +126,7 @@ uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.j
 node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
-Node 模块也导出 v1 SDK surface: `createKeyring`, `exportPublicKeyDocument`, `checkPasswordStrength`, `makeSenderDataLock`, `makeUserDataLock`, `DataEnvelope`, `Keyring`, `PublicKeyDocument` 和稳定 `DataLockErrorCode`。
+Node 模块只导出应用开发需要的 v1 SDK surface: `createKeyring`, `loadKeyring`, `exportPublicKeyDocument`, `checkPasswordStrength`, `makeSenderDataLock`, `makeUserDataLock`, `DataLockError` 和 `DataLockErrorCode`。源码入口是 `sdk/node/src/index.ts`, 兼容运行入口仍然是 `sdk/node/hx-datalock.mjs`; 详细 API 文档见 `sdk/node/README.md`。
 
 旧命令 `public-key`, `encrypt`, `decrypt` 不是 v1 CLI, 当前入口会提示改用 `export-public`, `lock`, `open`。
 

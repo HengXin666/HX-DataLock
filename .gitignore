@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 .uv-cache/
 .vscode/
+node_modules/
+sdk/node/dist/
+sdk/node/*.tgz

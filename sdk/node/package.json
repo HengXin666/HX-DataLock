@@ -1,0 +1,29 @@
+{
+  "name": "@hx/datalock",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "hx-datalock.mjs",
+    "README.md"
+  ],
+  "bin": {
+    "hxdl-node": "./hx-datalock.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test:compat": "uv run pytest tests/compat/test_cross_language.py -q"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^5.8.0"
+  }
+}
