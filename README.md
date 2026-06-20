@@ -1,166 +1,105 @@
 # HX-DataLock
 
-HX-DataLock 是一个"可写不可读"的通用加解密项目骨架。
+HX-DataLock 是一个面向"公共存储可读、写入方不可读、用户本地可解密"场景的加密 SDK。它把应用传入的 `Payload Bytes` 转成可携带的 `Data Envelope` JSON 密文, 让密文可以放在网盘、对象存储、数据库或其他不可信存储中。
 
-它把信任边界拆成三层:
+核心边界是: 写入方只拿 `Public Key Document`, 因此只能加密新数据; 用户本地持有完整 `Keyring` 和 `Master Password`, 才能解封 `Read Key` 并打开历史密文。
 
-- GitHub 私有仓库: 存储 `Keyring`。里面有可公开的 `Write Key`, 以及被主密码加密包裹的 `Read Key`。
-- 公共存储: 网盘、Cloudflare D1 等, 只存储 `Data Envelope` 密文。
-- 用户本地: 用户输入主密码, 解封 `Read Key`, 再解密公共存储中的密文。
+![HX-DataLock trust boundary](docs/assets/hxdl-trust-boundary.png)
 
-最重要的一点: 主密码只在本地输入。GitHub Actions 只验证文件格式和跑互通测试, 不接触真实主密码。
+## 什么时候适合
 
-## 安全模型
+- 前端、CLI、自动化任务或第三方系统需要提交加密数据, 但不应该具备解密能力。
+- 用户愿意在本地输入高熵 `Master Password`, 解密只发生在自己的设备上。
+- 密文需要跨语言流转: Python、Node/TypeScript、Kotlin 读取同一种 JSON 文档。
+- 存储层不可信, 只能假设它会读取、复制、删除、重放或篡改密文。
 
-本项目目标是做到:
+不适合的范围:
 
-- 泄露公共存储, 不泄露明文。
-- 泄露 GitHub 中的 `keyring.hxdl.json`, 攻击者只能拿到加密能力, 不能直接解密历史数据。
-- 拥有 `Write Key` 的发送方可以生成新密文, 但不能解密已有密文。
-- 用户本地拥有主密码时, 才能解封 `Read Key` 并读取数据。
+- HX-DataLock 是加密 codec, 不是同步、数据库、对象存储或业务序列化框架。
+- 当前文件助手面向 25 MB 以内的完整数据包; 大文件分片和流式处理应由应用层或后续专用格式承接。
+- `Data Envelope` 会保留解密所需的公开元数据, 用于跨语言解析、收件方匹配和认证解密; 业务隐私边界应放在 `Payload Bytes` 内部。
 
-这不是"绝对安全"。如果主密码很弱, 攻击者拿到 `keyring.hxdl.json` 后可以离线猜密码。要保护高价值数据, 主密码必须是高熵长口令, 最好由密码管理器生成。
+## 工作流程
 
-## 密码学结构
+发送方只需要 `Public Key Document`。它可以加密新数据, 但没有 `Master Password` 和 `Read Key`, 不能打开已有密文。
 
-- `Write Key` / `Read Key`: X25519
-- 内容密钥派生: HKDF-SHA256
-- 内容加密: AES-256-GCM
-- 主密码派生: scrypt
-- `Read Key` 包裹: AES-256-GCM
+![HX-DataLock encryption flow](docs/assets/hxdl-encryption-flow.png)
 
-## 安装 Python SDK
+用户本地使用完整 `Keyring` 和 `Master Password` 解封 `Read Key`, 再打开 `Data Envelope`。Master Password 不写入 Keyring、Public Key Document 或 Data Envelope。
 
-```powershell
-uv sync --dev
-```
+![HX-DataLock decryption flow](docs/assets/hxdl-decryption-flow.png)
 
-## 仓库布局
+## 快速开始
 
-- `sdk/py/`: Python SDK 和 CLI 包源码。
-- `sdk/node/`: Node TypeScript SDK / CLI 源码。`src/index.ts` 是简洁 SDK 入口, `hx-datalock.mjs` 保留为兼容 CLI / ESM 入口。
-- `examples/py/`: Python 使用示例。
-- `tests/py/`: Python SDK / CLI 测试。
-- `tests/compat/`: Python 与 Node 的跨 SDK 兼容测试。
-- `tests/workflows/`: GitHub Actions workflow 契约测试。
-
-TypeScript SDK 和 Android Kotlin SDK 还没有真实源码；对应缺口记录在 `.scratch/v1-spec/issues/11-implementation-gap-typescript-android-v1.md`。
-
-## 1. 本地生成 GitHub 存储的 Keyring
-
-```powershell
-uv run hxdl init --keyring keyring.hxdl.json
-```
-
-也可以使用本地交互脚本:
+Python CLI 是当前仓库的最短体验路径:
 
 ```sh
-sh scripts/hxdl-local.sh
-```
+uv sync --dev
+export HXDL_MASTER_PASSWORD="use-a-long-high-entropy-password"
 
-这个脚本适合 macOS、Linux、Git Bash 或 WSL。Windows PowerShell 下可以直接使用上面的 `uv run hxdl ...` 命令。
-
-把生成的 `keyring.hxdl.json` 提交到 GitHub 私有仓库。这个文件包含 `Write Key` 和被主密码包裹的 `Read Key`:
-
-- 用户本地可以用它和主密码打开 `Data Envelope`。
-- 写入方不要使用完整 `Keyring`。先导出 `Public Key Document`, 再把该公开文档交给写入方。
-
-```powershell
-uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
-```
-
-## 2. 发送方加密消息
-
-发送方只需要 `public.hxdl.json`, 不需要主密码:
-
-```powershell
-uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.json
-```
-
-输出的 `message.hxdl.json` 是 `Data Envelope`, 可以放到网盘、Cloudflare D1 或其他公共存储。
-
-业务代码也只需要调用文件级 API:
-
-```python
-from hx_datalock import PublicKeyDocument, makeSenderDataLock
-
-sender = makeSenderDataLock(PublicKeyDocument.read("public.hxdl.json"))
-sender.lockFile("message.txt", "message.hxdl.json")
-```
-
-## 3. 用户本地解密消息
-
-解密方需要 `keyring.hxdl.json` 和主密码:
-
-```powershell
-uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
-```
-
-也可以通过环境变量传入主密码, 适合本地自动化:
-
-```powershell
-$env:HXDL_MASTER_PASSWORD="你的高熵主密码"
-uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
-```
-
-业务代码调用方式:
-
-```python
-from hx_datalock import open_file
-
-open_file("keyring.hxdl.json", "message.hxdl.json", "message.txt", "你的高熵主密码")
-```
-
-## Node v1 CLI / SDK 互通
-
-Node CLI 和 Python SDK 使用同一种 `Keyring` / `Data Envelope` 格式, 因此可以交叉使用:
-
-```powershell
-node sdk/node/hx-datalock.mjs export-public --keyring keyring.hxdl.json --out public.hxdl.json
-node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --in message.txt --out message.hxdl.json
-uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt
-```
-
-```powershell
+uv run hxdl init --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
 uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.json
-node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in message.hxdl.json --out message.txt --password-env HXDL_MASTER_PASSWORD
+uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
-Node 模块只导出应用开发需要的 v1 SDK surface: `createKeyring`, `loadKeyring`, `exportPublicKeyDocument`, `checkPasswordStrength`, `makeSenderDataLock`, `makeUserDataLock`, `DataLockError` 和 `DataLockErrorCode`。源码入口是 `sdk/node/src/index.ts`, 兼容运行入口仍然是 `sdk/node/hx-datalock.mjs`; 详细 API 文档见 `sdk/node/README.md`。
+更多安装方式、API 示例和 CLI 命令见对应 SDK 自述文档。
 
-旧命令 `public-key`, `encrypt`, `decrypt` 不是 v1 CLI, 当前入口会提示改用 `export-public`, `lock`, `open`。
+## SDK 文档
 
-## 性能与文件上限
+| SDK | 范围 | 自述文档 |
+| --- | --- | --- |
+| Python | 完整 SDK、Sender DataLock、User DataLock、CLI、本地文件助手 | [sdk/py/README.md](sdk/py/README.md) |
+| Node/TypeScript | 完整 SDK、Sender DataLock、User DataLock、CLI、本地文件助手 | [sdk/node/README.md](sdk/node/README.md) |
+| Kotlin/JVM | 用户侧 SDK, 可打开 Envelope, 也可用完整 Keyring 本地加密 | [sdk/kotlin/README.md](sdk/kotlin/README.md) |
 
-v1 只支持单个完整 `Full Data Envelope`, 本地文件助手拒绝超过 25 MB 的文件并返回 `OVERSIZED_FILE`。不支持 `Chunked File Envelope`, 流式 API, 100 MB, 1 GB 或 10 GB 性能承诺。
+## 设计与规范
 
-本地复现基准:
+- [格式与 SDK 规范](docs/spec/v1.md): 算法、JSON 文档格式、错误码、SDK 表面和兼容性规则。
+- [加密与解密数据流](docs/data-flow-v1.zh-CN.md): 从 Master Password、Keyring、Public Key Document 到 Data Envelope 的实现数据流。
+- [架构决策记录](docs/adr/): 关键取舍, 例如密钥模型、CLI 密码输入、错误码、压缩、分块和平台 keychain 边界。
+-
+## 仓库布局
 
-```powershell
+- `sdk/py/`: Python SDK 和 CLI。
+- `sdk/node/`: Node/TypeScript SDK 和 CLI。
+- `sdk/kotlin/`: Kotlin/JVM 用户侧 SDK。
+- `docs/spec/`: 规范文档。
+- `docs/adr/`: 架构决策记录。
+- `docs/assets/`: README 和文档图片资产。
+- `tests/py/`: Python SDK/CLI 测试。
+- `tests/compat/`: Python 与 Node/TypeScript 互通测试。
+- `tests/kotlin/`: Kotlin 跨 SDK 测试。
+- `.scratch/v1-spec/issues/`: 规格拆分与验收记录。
+
+## 本地验证
+
+```sh
+uv run pytest -q
+```
+
+```sh
+cd sdk/node
+npm install
+npm run build
+```
+
+```sh
+cd sdk/kotlin
+gradle test
+```
+
+性能观察:
+
+```sh
 uv run hxdl bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 node sdk/node/hx-datalock.mjs bench --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 ```
 
-基准输出为 JSON lines, 覆盖 `unlockKeyring`, `lockBytes`, `openBytes`, `lockFile`, `openFile`, 默认测量 1 MB, 10 MB 和 25 MB。输出用于本机观察, 不是硬性性能保证。
+Benchmark 输出是 JSON lines, 覆盖 Keyring unlock、`lockBytes`、`openBytes`、`lockFile`、`openFile` 的 1 MB、10 MB 和 25 MB 场景。它用于本机观察, 不是硬性性能承诺。
 
-## GitHub Workflow
+## 安全边界
 
-`.github/workflows/keyring-check.yml` 会做两件事:
+HX-DataLock 是 Crypto Codec。应用仍然需要自己处理 Master Password 的生成和保存、Keyring 备份、公共存储的删除/重放/冲突解决、Payload Bytes 的业务序列化, 以及设备入侵、运行时内存抓取、恶意依赖和 UI 钓鱼等本地风险。
 
-- 验证提交的 `keyring.hxdl.json` 格式正确。
-- 检查没有明显提交裸私钥。
-
-`.github/workflows/sdk-tests.yml` 专门运行 SDK 测试:
-
-- Python SDK / CLI 测试: `tests/py/`
-- Node SDK surface 测试
-- Python 与 Node 的跨 SDK 兼容测试: `tests/compat/`
-
-Workflow 使用测试密码生成临时测试 Keyring, 不会接触你的真实主密码。
-
-本地验证:
-
-```powershell
-uv run pytest -q
-```
+HX-DataLock 不把密码尝试锁定当作离线安全控制: 一旦 Keyring 被复制, 攻击者可以脱离服务端限制进行猜测。真正有效的防线是高熵 Master Password、scrypt 成本和尽量减少 Master Password 驻留。
