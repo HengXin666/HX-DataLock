@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class DataLockErrorCode(StrEnum):
+    INVALID_KEYRING = "INVALID_KEYRING"
+    INVALID_PUBLIC_KEY_DOCUMENT = "INVALID_PUBLIC_KEY_DOCUMENT"
+    WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING = "WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING"
+    ENVELOPE_RECIPIENT_MISMATCH = "ENVELOPE_RECIPIENT_MISMATCH"
+    TAMPERED_ENVELOPE = "TAMPERED_ENVELOPE"
+    UNSUPPORTED_SCHEMA = "UNSUPPORTED_SCHEMA"
+    OVERSIZED_FILE = "OVERSIZED_FILE"
+    INVALID_UTF8 = "INVALID_UTF8"
+    UNSUPPORTED_ALGORITHM = "UNSUPPORTED_ALGORITHM"
+
+
+class DataLockError(Exception):
+    def __init__(self, code: DataLockErrorCode, message: str):
+        self.code = code
+        super().__init__(message)
