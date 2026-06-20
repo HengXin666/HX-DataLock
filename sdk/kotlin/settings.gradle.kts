@@ -14,4 +14,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "hx-datalock-knolin"
+rootProject.name = "hx-datalock-kotlin"

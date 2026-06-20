@@ -18,6 +18,6 @@ Validation of `.scratch/v1-spec/issues/*` found that issues 06, 08, and 09 are m
 
 - No `package.json`, `tsconfig.json`, `.ts`, `.kt`, `.kts`, or Gradle files were present during validation.
 - `uv run pytest -q` passed, but covered Python and Node `.mjs`, not TypeScript or Kotlin.
-- Current repository now contains `sdk/node/package.json`, `sdk/node/tsconfig.json`, TypeScript sources under `sdk/node/src`, and Kotlin/Gradle sources under `sdk/knolin`.
-- Kotlin User DataLock coverage is runnable through `sdk/knolin` Gradle tests plus `tests/knolin/test_knolin_sdk.py` cross-SDK compatibility tests.
-- `.github/workflows/sdk-tests.yml` now includes Knolin unit and cross-SDK jobs.
+- Current repository now contains `sdk/node/package.json`, `sdk/node/tsconfig.json`, TypeScript sources under `sdk/node/src`, and Kotlin/Gradle sources under `sdk/kotlin`.
+- Kotlin User DataLock coverage is runnable through `sdk/kotlin` Gradle tests plus `tests/kotlin/test_kotlin_sdk.py` cross-SDK compatibility tests.
+- `.github/workflows/sdk-tests.yml` now includes kotlin unit and cross-SDK jobs.

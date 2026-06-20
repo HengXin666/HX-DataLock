@@ -5,7 +5,7 @@ on:
     paths:
       - "sdk/node/**"
       - "sdk/py/**"
-      - "sdk/knolin/**"
+      - "sdk/kotlin/**"
       - "examples/**"
       - "tests/**"
       - "pyproject.toml"
@@ -15,7 +15,7 @@ on:
     paths:
       - "sdk/node/**"
       - "sdk/py/**"
-      - "sdk/knolin/**"
+      - "sdk/kotlin/**"
       - "examples/**"
       - "tests/**"
       - "pyproject.toml"
@@ -77,7 +77,7 @@ jobs:
       - name: Run cross-SDK compatibility tests
         run: uv run pytest tests/compat/test_cross_language.py -q
 
-  knolin-sdk-tests:
+  kotlin-sdk-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,11 +90,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14.2"
-      - name: Run Knolin SDK tests
-        working-directory: sdk/knolin
+      - name: Run kotlin SDK tests
+        working-directory: sdk/kotlin
         run: gradle test
 
-  knolin-cross-sdk-compatibility:
+  kotlin-cross-sdk-compatibility:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -111,8 +111,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14.2"
-      - name: Run Knolin cross-SDK tests
-        run: uv run pytest tests/knolin/test_knolin_sdk.py -q
+      - name: Run kotlin cross-SDK tests
+        run: uv run pytest tests/kotlin/test_kotlin_sdk.py -q
 
   sdk-examples:
     runs-on: ubuntu-latest

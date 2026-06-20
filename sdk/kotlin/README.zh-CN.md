@@ -1,8 +1,8 @@
-# HX-DataLock Knolin 用户侧 SDK
+# HX-DataLock kotlin 用户侧 SDK
 
-`sdk/knolin` 是 HX-DataLock v1 的 Kotlin/JVM 用户侧 SDK。它对应规范里的 Android Kotlin User DataLock 范围：本地用户持有完整 Keyring 和 Master Password，可以打开 Data Envelope，也可以使用 Keyring 内的 Write Key 本地加密新 Payload Bytes。
+`sdk/kotlin` 是 HX-DataLock v1 的 Kotlin/JVM 用户侧 SDK。它对应规范里的 Android Kotlin User DataLock 范围：本地用户持有完整 Keyring 和 Master Password，可以打开 Data Envelope，也可以使用 Keyring 内的 Write Key 本地加密新 Payload Bytes。
 
-> 目录名保留为 `knolin`，以匹配当前仓库任务路径；包名使用 `com.hxdatalock`。
+> 目录名保留为 `kotlin`，以匹配当前仓库任务路径；包名使用 `com.hxdatalock`。
 
 ## 支持范围
 
@@ -37,28 +37,28 @@ HxDataLock.makeUserDataLock(keyring, password).use { user ->
 ## 运行测试
 
 ```bash
-cd sdk/knolin
+cd sdk/kotlin
 gradle test
 ```
 
 跨语言示例由仓库根目录的 pytest 测试驱动：
 
 ```bash
-uv run pytest tests/knolin/test_knolin_sdk.py -q
+uv run pytest tests/kotlin/test_kotlin_sdk.py -q
 ```
 
 ## 示例
 
-`examples/knolin/OpenEnvelope.kt` 使用 Kotlin 打开 Python/Node 生成的 Data Envelope：
+`examples/kotlin/OpenEnvelope.kt` 使用 Kotlin 打开 Python/Node 生成的 Data Envelope：
 
 ```bash
-cd sdk/knolin
+cd sdk/kotlin
 gradle runOpenExample --quiet -PexampleArgs="/path/keyring.json|/path/envelope.json|/path/out.bin|master-password"
 ```
 
-`examples/knolin/LockEnvelope.kt` 使用 Kotlin 本地加密 Payload Bytes：
+`examples/kotlin/LockEnvelope.kt` 使用 Kotlin 本地加密 Payload Bytes：
 
 ```bash
-cd sdk/knolin
+cd sdk/kotlin
 gradle runLockExample --quiet -PexampleArgs="/path/keyring.json|/path/plain.bin|/path/envelope.json|master-password"
 ```

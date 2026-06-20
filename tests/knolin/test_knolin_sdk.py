@@ -6,14 +6,16 @@ import pytest
 
 from hx_datalock import DataEnvelope, decrypt_message, encrypt_message, init_keyring
 
-
 PASSWORD = "correct horse battery staple for hx datalock"
 
 
-pytestmark = pytest.mark.skipif(shutil.which("gradle") is None, reason="gradle is required for Knolin compatibility tests")
+pytestmark = pytest.mark.skipif(
+    shutil.which("gradle") is None,
+    reason="gradle is required for kotlin compatibility tests",
+)
 
 
-def test_python_envelope_opens_with_knolin_example(tmp_path: Path) -> None:
+def test_python_envelope_opens_with_kotlin_example(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     envelope_path = tmp_path / "sealed.hxdl.json"
     opened_path = tmp_path / "opened.txt"
@@ -28,14 +30,14 @@ def test_python_envelope_opens_with_knolin_example(tmp_path: Path) -> None:
             "--quiet",
             f"-PexampleArgs={keyring_path}|{envelope_path}|{opened_path}|{PASSWORD}",
         ],
-        cwd=Path("sdk/knolin"),
+        cwd=Path("sdk/kotlin"),
         check=True,
     )
 
     assert opened_path.read_bytes() == "Python 到 Kotlin".encode()
 
 
-def test_knolin_example_locks_envelope_that_python_opens(tmp_path: Path) -> None:
+def test_kotlin_example_locks_envelope_that_python_opens(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     plain_path = tmp_path / "plain.txt"
     envelope_path = tmp_path / "sealed.hxdl.json"
@@ -49,8 +51,11 @@ def test_knolin_example_locks_envelope_that_python_opens(tmp_path: Path) -> None
             "--quiet",
             f"-PexampleArgs={keyring_path}|{plain_path}|{envelope_path}|{PASSWORD}",
         ],
-        cwd=Path("sdk/knolin"),
+        cwd=Path("sdk/kotlin"),
         check=True,
     )
 
-    assert decrypt_message(keyring, PASSWORD, DataEnvelope.read(envelope_path)) == plain_path.read_bytes()
+    assert (
+        decrypt_message(keyring, PASSWORD, DataEnvelope.read(envelope_path))
+        == plain_path.read_bytes()
+    )

@@ -20,7 +20,7 @@ dependencies {
 
 sourceSets {
     create("examples") {
-        kotlin.srcDir("../../examples/knolin")
+        kotlin.srcDir("../../examples/kotlin")
         compileClasspath += sourceSets["main"].output + configurations["runtimeClasspath"]
         runtimeClasspath += output + compileClasspath
     }
