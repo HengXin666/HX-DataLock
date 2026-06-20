@@ -32,8 +32,8 @@ internal object StableJson {
         is JsonPrimitive -> when {
             element.isString -> element.content
             element.booleanOrNull != null -> element.boolean
-            element.longOrNull != null -> element.long
-            element.doubleOrNull != null -> element.double
+            element.longOrNull != null -> element.longOrNull
+            element.doubleOrNull != null -> element.doubleOrNull
             else -> element.contentOrNull
         }
     }

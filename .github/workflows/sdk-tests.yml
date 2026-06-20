@@ -74,6 +74,12 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
+      - name: Install Node SDK dependencies
+        working-directory: sdk/node
+        run: npm ci
+      - name: Build Node SDK
+        working-directory: sdk/node
+        run: npm run build
       - name: Run cross-SDK compatibility tests
         run: uv run pytest tests/compat/test_cross_language.py -q
 
@@ -112,7 +118,7 @@ jobs:
         with:
           gradle-version: "8.14.2"
       - name: Run kotlin cross-SDK tests
-        run: uv run pytest tests/kotlin/test_kotlin_sdk.py -q
+        run: uv run pytest tests/knolin/test_knolin_sdk.py -q
 
   sdk-examples:
     runs-on: ubuntu-latest
@@ -127,5 +133,11 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
+      - name: Install Node SDK dependencies
+        working-directory: sdk/node
+        run: npm ci
+      - name: Build Node SDK
+        working-directory: sdk/node
+        run: npm run build
       - name: Run SDK example tests
         run: uv run pytest tests/examples/test_sdk_examples.py -q

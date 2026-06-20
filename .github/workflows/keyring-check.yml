@@ -37,6 +37,12 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
+      - name: Install Node SDK dependencies
+        working-directory: sdk/node
+        run: npm ci
+      - name: Build Node SDK
+        working-directory: sdk/node
+        run: npm run build
       - name: Validate committed Keyring
         shell: bash
         run: |
