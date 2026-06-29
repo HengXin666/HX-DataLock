@@ -7,7 +7,13 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric import x25519
 
 from .constants import ENVELOPE_SCHEMA, KEYRING_SCHEMA, PUBLIC_KEY_SCHEMA
-from .crypto_codec import unwrap_read_key, validate_envelope_alg, validate_public_write_key
+from .crypto_codec import (
+    unwrap_read_key,
+    validate_envelope_alg,
+    validate_envelope_fields,
+    validate_keyring_encrypted_read_key,
+    validate_public_write_key,
+)
 from .errors import DataLockError, DataLockErrorCode
 from .json import dumps_stable_json, read_json_document, write_json_document
 
@@ -32,17 +38,7 @@ class Keyring:
             )
         if not isinstance(self.raw.get("encryptedReadKey"), dict):
             raise DataLockError(DataLockErrorCode.INVALID_KEYRING, "Keyring must contain encrypted Read Key")
-        encrypted = self.raw["encryptedReadKey"]
-        if encrypted.get("kdf", {}).get("name") != "scrypt":
-            raise DataLockError(
-                DataLockErrorCode.UNSUPPORTED_ALGORITHM,
-                f"Unsupported password KDF: {encrypted.get('kdf', {}).get('name')}",
-            )
-        if encrypted.get("aead", {}).get("name") != "AES-256-GCM":
-            raise DataLockError(
-                DataLockErrorCode.UNSUPPORTED_ALGORITHM,
-                "encryptedReadKey must use AES-256-GCM",
-            )
+        validate_keyring_encrypted_read_key(self.raw["encryptedReadKey"])
         validate_public_write_key(self.raw, error_code=DataLockErrorCode.INVALID_KEYRING)
 
     def to_json(self) -> str:
@@ -68,7 +64,9 @@ class DataEnvelope:
 
     @classmethod
     def read(cls, path: str | Path) -> "DataEnvelope":
-        return cls(read_json_document(path))
+        document = cls(read_json_document(path))
+        document.verify()
+        return document
 
     def verify(self) -> None:
         raw = self.raw
@@ -78,6 +76,7 @@ class DataEnvelope:
                 f"Unsupported Data Envelope schema: {raw.get('schema')}",
             )
         validate_envelope_alg(raw)
+        validate_envelope_fields(raw)
 
 
 @dataclass(frozen=True)
