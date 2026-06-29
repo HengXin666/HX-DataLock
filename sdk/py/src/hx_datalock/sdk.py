@@ -15,6 +15,7 @@ from .constants import (
     ENVELOPE_SCHEMA,
     KEY_LENGTH,
     KEYRING_SCHEMA,
+    MAX_KEYRING_JSON_BYTES,
     PUBLIC_KEY_SCHEMA,
 )
 from .crypto_codec import (
@@ -78,7 +79,7 @@ def init_keyring(path: str | Path, master_password: str, *, scrypt_n: int = DEFA
 
 
 def load_keyring(path: str | Path) -> Keyring:
-    keyring = Keyring(read_json_document(path))
+    keyring = Keyring(read_json_document(path, max_bytes=MAX_KEYRING_JSON_BYTES))
     keyring.verify()
     return keyring
 
@@ -156,16 +157,29 @@ def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
     return DataEnvelope(lock_bytes_with_public_key_raw(keyring.key_id, keyring.public_write_key, plaintext))
 
 
+def encrypt_message_for_sender(public_key_document: PublicKeyDocument, plaintext: bytes) -> DataEnvelope:
+    sender = makeSenderDataLock(public_key_document)
+    return sender.lockBytes(plaintext)
+
+
 def decrypt_message(keyring: Keyring, master_password: str, envelope: DataEnvelope) -> bytes:
     user = makeUserDataLock(keyring, {"masterPassword": master_password})
     return user.openBytes(envelope)
 
 
-def send_file(keyring_path: str | Path, input_path: str | Path, output_path: str | Path) -> DataEnvelope:
-    keyring = load_keyring(keyring_path)
-    envelope = encrypt_message(keyring, Path(input_path).read_bytes())
+def send_file_with_public_doc(
+    public_key_document_path: str | Path,
+    input_path: str | Path,
+    output_path: str | Path,
+) -> DataEnvelope:
+    public_key_document = PublicKeyDocument.read(public_key_document_path)
+    envelope = encrypt_message_for_sender(public_key_document, Path(input_path).read_bytes())
     envelope.write(output_path)
     return envelope
+
+
+def send_file(public_key_document_path: str | Path, input_path: str | Path, output_path: str | Path) -> DataEnvelope:
+    return send_file_with_public_doc(public_key_document_path, input_path, output_path)
 
 
 def open_file(
