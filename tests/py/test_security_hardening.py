@@ -21,25 +21,40 @@ from hx_datalock.constants import MAX_V1_FILE_BYTES
 MASTER_PASSWORD = "correct horse battery staple 2026 HX-DataLock hardening"
 
 
-def test_sender_file_helper_requires_public_key_document(tmp_path):
+def test_sender_file_helper_accepts_public_key_document(tmp_path):
     keyring = create_keyring(MASTER_PASSWORD)
     public_document = export_public_key_document(keyring)
 
-    keyring_path = tmp_path / "keyring.hxdl.json"
     public_path = tmp_path / "public.hxdl.json"
     input_path = tmp_path / "message.txt"
     output_path = tmp_path / "message.hxdl.json"
 
-    keyring.write(keyring_path)
     public_document.write(public_path)
     input_path.write_text("hello", encoding="utf-8")
 
     envelope = send_file_with_public_doc(public_path, input_path, output_path)
     assert envelope.raw["recipientKeyId"] == public_document.key_id
 
+
+def test_sender_datalock_rejects_full_keyring():
+    keyring = create_keyring(MASTER_PASSWORD)
+
     with pytest.raises(DataLockError) as exc_info:
-        send_file(keyring_path, input_path, output_path)
-    assert exc_info.value.code == DataLockErrorCode.UNSUPPORTED_SCHEMA
+        makeSenderDataLock(keyring)
+    assert exc_info.value.code == DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
+
+
+def test_legacy_send_file_keeps_v1_keyring_compatibility(tmp_path):
+    keyring = create_keyring(MASTER_PASSWORD)
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    input_path = tmp_path / "message.txt"
+    output_path = tmp_path / "message.hxdl.json"
+
+    keyring.write(keyring_path)
+    input_path.write_text("hello", encoding="utf-8")
+
+    envelope = send_file(keyring_path, input_path, output_path)
+    assert envelope.raw["recipientKeyId"] == keyring.key_id
 
 
 def test_keyring_verify_rejects_oversized_scrypt_n():
