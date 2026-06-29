@@ -178,8 +178,16 @@ def send_file_with_public_doc(
     return envelope
 
 
-def send_file(public_key_document_path: str | Path, input_path: str | Path, output_path: str | Path) -> DataEnvelope:
-    return send_file_with_public_doc(public_key_document_path, input_path, output_path)
+def send_file(keyring_path: str | Path, input_path: str | Path, output_path: str | Path) -> DataEnvelope:
+    """Legacy local helper that encrypts with the Write Key from a full Keyring.
+
+    New sender environments should use send_file_with_public_doc(...) so they never
+    receive full Keyring material. This helper is kept for v1 API compatibility.
+    """
+    keyring = load_keyring(keyring_path)
+    envelope = encrypt_message(keyring, Path(input_path).read_bytes())
+    envelope.write(output_path)
+    return envelope
 
 
 def open_file(
