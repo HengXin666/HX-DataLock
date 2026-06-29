@@ -10,6 +10,7 @@ from .sdk import (
     create_keyring,
     decrypt_message,
     encrypt_message,
+    encrypt_message_for_sender,
     export_public_key_document,
     init_keyring,
     load_keyring,
@@ -18,6 +19,7 @@ from .sdk import (
     make_v1_compatibility_manifest,
     open_file,
     send_file,
+    send_file_with_public_doc,
     verify_keyring_file,
     verify_public_key_document_file,
 )
@@ -34,6 +36,7 @@ __all__ = [
     "create_keyring",
     "decrypt_message",
     "encrypt_message",
+    "encrypt_message_for_sender",
     "export_public_key_document",
     "init_keyring",
     "load_keyring",
@@ -42,6 +45,7 @@ __all__ = [
     "make_v1_compatibility_manifest",
     "open_file",
     "send_file",
+    "send_file_with_public_doc",
     "verify_keyring_file",
     "verify_public_key_document_file",
 ]
