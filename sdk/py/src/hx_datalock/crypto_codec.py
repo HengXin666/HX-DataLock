@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import secrets
 import unicodedata
@@ -56,7 +57,7 @@ def from_b64(
         raise DataLockError(error_code, f"Invalid binary length for field: {field}")
     try:
         decoded = base64.b64decode(value, validate=True)
-    except ValueError as exc:
+    except (ValueError, binascii.Error) as exc:
         raise DataLockError(error_code, f"Missing or invalid base64 field: {field}") from exc
     if exact_length is not None and len(decoded) != exact_length:
         raise DataLockError(error_code, f"Invalid binary length for field: {field}")
@@ -190,6 +191,8 @@ def validate_public_write_key(raw: dict[str, Any], *, error_code: DataLockErrorC
             DataLockErrorCode.UNSUPPORTED_ALGORITHM,
             "publicWriteKey must use X25519",
         )
+    if not isinstance(public_write_key.get("keyId"), str):
+        raise DataLockError(error_code, "publicWriteKey.keyId must be a string")
 
     try:
         public_der = from_b64(
