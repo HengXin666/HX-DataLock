@@ -6,7 +6,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import x25519
 
-from .constants import ENVELOPE_SCHEMA, KEYRING_SCHEMA, PUBLIC_KEY_SCHEMA
+from .constants import ENVELOPE_SCHEMA, KEYRING_SCHEMA, MAX_PUBLIC_KEY_JSON_BYTES, PUBLIC_KEY_SCHEMA
 from .crypto_codec import (
     unwrap_read_key,
     validate_envelope_alg,
@@ -118,6 +118,6 @@ class PublicKeyDocument:
 
     @classmethod
     def read(cls, path: str | Path) -> "PublicKeyDocument":
-        document = cls(read_json_document(path))
+        document = cls(read_json_document(path, max_bytes=MAX_PUBLIC_KEY_JSON_BYTES))
         document.verify()
         return document
