@@ -11,6 +11,7 @@ from hx_datalock import (
     Keyring,
     create_keyring,
     export_public_key_document,
+    makeSenderDataLock,
     send_file,
     send_file_with_public_doc,
 )
@@ -53,7 +54,8 @@ def test_keyring_verify_rejects_oversized_scrypt_n():
 
 def test_envelope_verify_rejects_oversized_ciphertext_without_decode():
     keyring = create_keyring(MASTER_PASSWORD)
-    envelope = send_file_with_public_doc_from_document(keyring, b"hello")
+    public_document = export_public_key_document(keyring)
+    envelope = makeSenderDataLock(public_document).lockBytes(b"hello")
     raw = copy.deepcopy(envelope.raw)
     max_b64_chars = ((MAX_V1_FILE_BYTES + 2) // 3) * 4
     raw["ciphertext"] = "A" * (max_b64_chars + 4)
@@ -61,9 +63,3 @@ def test_envelope_verify_rejects_oversized_ciphertext_without_decode():
     with pytest.raises(DataLockError) as exc_info:
         DataEnvelope(raw).verify()
     assert exc_info.value.code == DataLockErrorCode.TAMPERED_ENVELOPE
-
-
-def send_file_with_public_doc_from_document(keyring, payload: bytes) -> DataEnvelope:
-    public_document = export_public_key_document(keyring)
-    sender = __import__("hx_datalock").makeSenderDataLock(public_document)
-    return sender.lockBytes(payload)
