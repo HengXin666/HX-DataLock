@@ -60,7 +60,7 @@ uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out messag
 - [格式与 SDK 规范](docs/spec/v1.md): 算法、JSON 文档格式、错误码、SDK 表面和兼容性规则。
 - [加密与解密数据流](docs/data-flow-v1.zh-CN.md): 从 Master Password、Keyring、Public Key Document 到 Data Envelope 的实现数据流。
 - [架构决策记录](docs/adr/): 关键取舍, 例如密钥模型、CLI 密码输入、错误码、压缩、分块和平台 keychain 边界。
--
+
 ## 仓库布局
 
 - `sdk/py/`: Python SDK 和 CLI。

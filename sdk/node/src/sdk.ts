@@ -6,6 +6,7 @@ import {
   DEFAULT_SCRYPT_R,
   KEY_LENGTH,
   KEYRING_SCHEMA,
+  MAX_KEYRING_JSON_BYTES,
   PUBLIC_KEY_SCHEMA,
 } from './constants.js';
 import { Keyring, PublicKeyDocument } from './documents.js';
@@ -65,7 +66,7 @@ export function createKeyring(masterPassword, options: any = {}) {
 export const create_keyring = createKeyring;
 
 export function loadKeyring(path) {
-  const keyring = new Keyring(readJson(path));
+  const keyring = new Keyring(readJson(path, MAX_KEYRING_JSON_BYTES));
   keyring.verify();
   return keyring;
 }

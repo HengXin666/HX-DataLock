@@ -23,6 +23,9 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 internal object CryptoCodec {
+    private const val X25519_SPKI_MAX_BYTES = 512
+    private const val WRAPPED_READ_KEY_MAX_BYTES = 4096
+
     private val random = SecureRandom()
     private val b64 = Base64.getEncoder()
     private val b64Decoder = Base64.getDecoder()
@@ -36,12 +39,33 @@ internal object CryptoCodec {
 
     fun b64(data: ByteArray): String = b64.encodeToString(data)
 
-    fun fromB64(value: Any?, field: String, code: DataLockErrorCode): ByteArray {
+    private fun maxB64Chars(maxBytes: Int): Int = ((maxBytes + 2) / 3) * 4
+
+    fun fromB64(
+        value: Any?,
+        field: String,
+        code: DataLockErrorCode,
+        exactLength: Int? = null,
+        maxLength: Int? = null,
+    ): ByteArray {
         if (value !is String) {
             throw DataLockException(code, "Missing or invalid base64 field: $field")
         }
+        if (exactLength != null && value.length > maxB64Chars(exactLength)) {
+            throw DataLockException(code, "Invalid binary length for field: $field")
+        }
+        if (maxLength != null && value.length > maxB64Chars(maxLength)) {
+            throw DataLockException(code, "Invalid binary length for field: $field")
+        }
         try {
-            return b64Decoder.decode(value)
+            val decoded = b64Decoder.decode(value)
+            if (exactLength != null && decoded.size != exactLength) {
+                throw DataLockException(code, "Invalid binary length for field: $field")
+            }
+            if (maxLength != null && decoded.size > maxLength) {
+                throw DataLockException(code, "Invalid binary length for field: $field")
+            }
+            return decoded
         } catch (ex: IllegalArgumentException) {
             throw DataLockException(code, "Missing or invalid base64 field: $field", ex)
         }
@@ -66,7 +90,10 @@ internal object CryptoCodec {
             throw DataLockException(DataLockErrorCode.UNSUPPORTED_ALGORITHM, "publicWriteKey must use X25519")
         }
         try {
-            val publicDer = fromB64(publicWriteKey["spki"], "publicWriteKey.spki", code)
+            if (publicWriteKey["keyId"] !is String) {
+                throw DataLockException(code, "publicWriteKey.keyId must be a string")
+            }
+            val publicDer = fromB64(publicWriteKey["spki"], "publicWriteKey.spki", code, maxLength = X25519_SPKI_MAX_BYTES)
             val expectedKeyId = "x25519:${sha256Base64Url(publicDer).take(22)}"
             if (publicWriteKey["keyId"] != expectedKeyId) {
                 throw DataLockException(code, "keyId does not match the Write Key")
@@ -91,18 +118,80 @@ internal object CryptoCodec {
     }
 
     fun derivePasswordKey(masterPassword: String, kdf: Map<String, Any?>): ByteArray {
-        if (kdf["name"] != "scrypt") {
-            throw DataLockException(DataLockErrorCode.UNSUPPORTED_ALGORITHM, "Unsupported password KDF: ${kdf["name"]}")
-        }
+        validateScryptParams(kdf)
         val normalized = Normalizer.normalize(masterPassword, Normalizer.Form.NFC)
         return SCrypt.generate(
             normalized.toByteArray(Charsets.UTF_8),
-            fromB64(kdf["salt"], "encryptedReadKey.kdf.salt", DataLockErrorCode.INVALID_KEYRING),
+            fromB64(kdf["salt"], "encryptedReadKey.kdf.salt", DataLockErrorCode.INVALID_KEYRING, exactLength = 32),
             (kdf["N"] as Number).toInt(),
             (kdf["r"] as Number).toInt(),
             (kdf["p"] as Number).toInt(),
-            (kdf["keyLength"] as Number?)?.toInt() ?: KEY_LENGTH,
+            (kdf["keyLength"] as Number).toInt(),
         )
+    }
+
+    private fun requireInt(raw: Map<String, Any?>, field: String, code: DataLockErrorCode): Int {
+        val number = raw[field] as? Number ?: throw DataLockException(code, "Invalid scrypt parameter: $field")
+        val doubleValue = number.toDouble()
+        val longValue = number.toLong()
+        if (doubleValue % 1.0 != 0.0 || longValue < Int.MIN_VALUE || longValue > Int.MAX_VALUE) {
+            throw DataLockException(code, "Invalid scrypt parameter: $field")
+        }
+        return longValue.toInt()
+    }
+
+    fun validateScryptParams(kdf: Map<String, Any?>, code: DataLockErrorCode = DataLockErrorCode.INVALID_KEYRING) {
+        if (kdf["name"] != "scrypt") {
+            throw DataLockException(DataLockErrorCode.UNSUPPORTED_ALGORITHM, "Unsupported password KDF: ${kdf["name"]}")
+        }
+        val n = requireInt(kdf, "N", code)
+        val r = requireInt(kdf, "r", code)
+        val p = requireInt(kdf, "p", code)
+        val keyLength = requireInt(kdf, "keyLength", code)
+        if (n < MIN_SCRYPT_N || n > MAX_SCRYPT_N || n and (n - 1) != 0) {
+            throw DataLockException(code, "Invalid scrypt N parameter")
+        }
+        if (r < 1 || r > MAX_SCRYPT_R) {
+            throw DataLockException(code, "Invalid scrypt r parameter")
+        }
+        if (p < 1 || p > MAX_SCRYPT_P) {
+            throw DataLockException(code, "Invalid scrypt p parameter")
+        }
+        if (keyLength != KEY_LENGTH) {
+            throw DataLockException(code, "Invalid scrypt keyLength parameter")
+        }
+        fromB64(kdf["salt"], "encryptedReadKey.kdf.salt", code, exactLength = 32)
+    }
+
+    fun validateKeyringEncryptedReadKey(encrypted: Map<String, Any?>) {
+        val kdf = encrypted.mapField("kdf", DataLockErrorCode.INVALID_KEYRING)
+        val aead = encrypted.mapField("aead", DataLockErrorCode.INVALID_KEYRING)
+        validateScryptParams(kdf, DataLockErrorCode.INVALID_KEYRING)
+        if (aead["name"] != "AES-256-GCM") {
+            throw DataLockException(DataLockErrorCode.UNSUPPORTED_ALGORITHM, "encryptedReadKey must use AES-256-GCM")
+        }
+        fromB64(aead["nonce"], "encryptedReadKey.aead.nonce", DataLockErrorCode.INVALID_KEYRING, exactLength = 12)
+        fromB64(aead["tag"], "encryptedReadKey.aead.tag", DataLockErrorCode.INVALID_KEYRING, exactLength = 16)
+        fromB64(encrypted["ciphertext"], "encryptedReadKey.ciphertext", DataLockErrorCode.INVALID_KEYRING, maxLength = WRAPPED_READ_KEY_MAX_BYTES)
+    }
+
+    fun validateEnvelopeFields(raw: Map<String, Any?>) {
+        if ((raw["recipientKeyId"] as? String).isNullOrEmpty()) {
+            throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope must contain recipientKeyId")
+        }
+        fromB64(raw["ephemeralPublicKey"], "ephemeralPublicKey", DataLockErrorCode.TAMPERED_ENVELOPE, maxLength = X25519_SPKI_MAX_BYTES)
+        fromB64(raw["hkdfSalt"], "hkdfSalt", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 32)
+        fromB64(raw["nonce"], "nonce", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 12)
+        fromB64(raw["tag"], "tag", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 16)
+        val ciphertext = raw["ciphertext"] as? String
+            ?: throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Missing or invalid base64 field: ciphertext")
+        if (ciphertext.length > maxB64Chars(MAX_V1_FILE_BYTES)) {
+            throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "Data Envelope ciphertext exceeds the v1 size limit")
+        }
+        val decodedCiphertext = fromB64(ciphertext, "ciphertext", DataLockErrorCode.TAMPERED_ENVELOPE)
+        if (decodedCiphertext.size > MAX_V1_FILE_BYTES) {
+            throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "Data Envelope ciphertext exceeds the v1 size limit")
+        }
     }
 
     fun sealReadKey(keyId: String, masterPassword: String, kdf: Map<String, Any?>, privateDer: ByteArray): LinkedHashMap<String, Any?> {
@@ -126,9 +215,9 @@ internal object CryptoCodec {
         try {
             val privateDer = aesGcmDecrypt(
                 wrappingKey,
-                fromB64(aead["nonce"], "encryptedReadKey.aead.nonce", DataLockErrorCode.INVALID_KEYRING),
-                fromB64(encrypted["ciphertext"], "encryptedReadKey.ciphertext", DataLockErrorCode.INVALID_KEYRING),
-                fromB64(aead["tag"], "encryptedReadKey.aead.tag", DataLockErrorCode.INVALID_KEYRING),
+                fromB64(aead["nonce"], "encryptedReadKey.aead.nonce", DataLockErrorCode.INVALID_KEYRING, exactLength = 12),
+                fromB64(encrypted["ciphertext"], "encryptedReadKey.ciphertext", DataLockErrorCode.INVALID_KEYRING, maxLength = WRAPPED_READ_KEY_MAX_BYTES),
+                fromB64(aead["tag"], "encryptedReadKey.aead.tag", DataLockErrorCode.INVALID_KEYRING, exactLength = 16),
                 keyringAad(keyId),
             )
             return loadPrivateReadKey(privateDer)
@@ -162,22 +251,23 @@ internal object CryptoCodec {
 
     fun openEnvelopePayload(keyId: String, readKey: X25519PrivateKeyParameters, raw: Map<String, Any?>): ByteArray {
         try {
-            val ephemeralDer = fromB64(raw["ephemeralPublicKey"], "ephemeralPublicKey", DataLockErrorCode.TAMPERED_ENVELOPE)
+            validateEnvelopeFields(raw)
+            val ephemeralDer = fromB64(raw["ephemeralPublicKey"], "ephemeralPublicKey", DataLockErrorCode.TAMPERED_ENVELOPE, maxLength = X25519_SPKI_MAX_BYTES)
             val ephemeralInfo = SubjectPublicKeyInfo.getInstance(ephemeralDer)
             val ephemeralPublic = X25519PublicKeyParameters(ephemeralInfo.publicKeyData.bytes, 0)
             val sharedSecret = exchange(readKey, ephemeralPublic)
             val contentKey = hkdf(
                 sharedSecret,
-                fromB64(raw["hkdfSalt"], "hkdfSalt", DataLockErrorCode.TAMPERED_ENVELOPE),
+                fromB64(raw["hkdfSalt"], "hkdfSalt", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 32),
                 "$ENVELOPE_SCHEMA:$keyId".toByteArray(Charsets.UTF_8),
             )
             @Suppress("UNCHECKED_CAST")
             val alg = raw.mapField("alg", DataLockErrorCode.TAMPERED_ENVELOPE) as Map<String, String>
             return aesGcmDecrypt(
                 contentKey,
-                fromB64(raw["nonce"], "nonce", DataLockErrorCode.TAMPERED_ENVELOPE),
+                fromB64(raw["nonce"], "nonce", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 12),
                 fromB64(raw["ciphertext"], "ciphertext", DataLockErrorCode.TAMPERED_ENVELOPE),
-                fromB64(raw["tag"], "tag", DataLockErrorCode.TAMPERED_ENVELOPE),
+                fromB64(raw["tag"], "tag", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 16),
                 envelopeAad(keyId, alg),
             )
         } catch (ex: DataLockException) {

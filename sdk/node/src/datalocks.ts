@@ -86,7 +86,7 @@ export class UserDataLock {
     let ephemeralPublicKey;
     try {
       ephemeralPublicKey = createPublicKey({
-        key: fromB64(dataEnvelope.raw.ephemeralPublicKey, 'ephemeralPublicKey', DataLockErrorCode.TAMPERED_ENVELOPE),
+        key: fromB64(dataEnvelope.raw.ephemeralPublicKey, 'ephemeralPublicKey', DataLockErrorCode.TAMPERED_ENVELOPE, { maxLength: 512 }),
         format: 'der',
         type: 'spki',
       });
@@ -98,15 +98,15 @@ export class UserDataLock {
     const contentKey = Buffer.from(hkdfSync(
       'sha256',
       sharedSecret,
-      fromB64(dataEnvelope.raw.hkdfSalt, 'hkdfSalt', DataLockErrorCode.TAMPERED_ENVELOPE),
+      fromB64(dataEnvelope.raw.hkdfSalt, 'hkdfSalt', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 32 }),
       Buffer.from(`${ENVELOPE_SCHEMA}:${this.keyring.keyId}`, 'utf8'),
       KEY_LENGTH,
     ));
     return decryptAesGcm(
       contentKey,
       {
-        nonce: fromB64(dataEnvelope.raw.nonce, 'nonce', DataLockErrorCode.TAMPERED_ENVELOPE),
-        tag: fromB64(dataEnvelope.raw.tag, 'tag', DataLockErrorCode.TAMPERED_ENVELOPE),
+        nonce: fromB64(dataEnvelope.raw.nonce, 'nonce', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 12 }),
+        tag: fromB64(dataEnvelope.raw.tag, 'tag', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 16 }),
         ciphertext: fromB64(dataEnvelope.raw.ciphertext, 'ciphertext', DataLockErrorCode.TAMPERED_ENVELOPE),
       },
       aadForEnvelope(this.keyring.keyId, dataEnvelope.raw.alg),

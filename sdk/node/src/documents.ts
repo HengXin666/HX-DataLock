@@ -1,12 +1,14 @@
 import { createPrivateKey } from 'node:crypto';
 import { DataLockError, DataLockErrorCode } from './errors.js';
-import { ENVELOPE_SCHEMA, KEYRING_SCHEMA, PUBLIC_KEY_SCHEMA } from './constants.js';
+import { ENVELOPE_SCHEMA, KEYRING_SCHEMA, MAX_PUBLIC_KEY_JSON_BYTES, PUBLIC_KEY_SCHEMA } from './constants.js';
 import {
   aadForKeyring,
   decryptAesGcm,
   derivePasswordKey,
   fromB64,
   requireEnvelopeAlg,
+  validateEnvelopeFields,
+  validateKeyringEncryptedReadKey,
   validatePublicWriteKey,
 } from './crypto-codec.js';
 import { readJson, writeJson } from './json.js';
@@ -30,15 +32,7 @@ export class Keyring {
     if (this.raw?.schema !== KEYRING_SCHEMA) {
       throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, `Unsupported Keyring schema: ${this.raw?.schema}`);
     }
-    if (!this.raw.encryptedReadKey) {
-      throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Keyring must contain encrypted Read Key');
-    }
-    if (this.raw.encryptedReadKey.kdf?.name !== 'scrypt') {
-      throw new DataLockError(DataLockErrorCode.UNSUPPORTED_ALGORITHM, `Unsupported password KDF: ${this.raw.encryptedReadKey.kdf?.name}`);
-    }
-    if (this.raw.encryptedReadKey.aead?.name !== 'AES-256-GCM') {
-      throw new DataLockError(DataLockErrorCode.UNSUPPORTED_ALGORITHM, 'encryptedReadKey must use AES-256-GCM');
-    }
+    validateKeyringEncryptedReadKey(this.raw.encryptedReadKey);
     validatePublicWriteKey(this.raw, DataLockErrorCode.INVALID_KEYRING);
   }
   toJSON() {
@@ -54,9 +48,9 @@ export class Keyring {
     const privateDer = decryptAesGcm(
       wrappingKey,
       {
-        nonce: fromB64(encrypted.aead.nonce, 'encryptedReadKey.aead.nonce'),
-        tag: fromB64(encrypted.aead.tag, 'encryptedReadKey.aead.tag'),
-        ciphertext: fromB64(encrypted.ciphertext, 'encryptedReadKey.ciphertext'),
+        nonce: fromB64(encrypted.aead.nonce, 'encryptedReadKey.aead.nonce', DataLockErrorCode.INVALID_KEYRING, { exactLength: 12 }),
+        tag: fromB64(encrypted.aead.tag, 'encryptedReadKey.aead.tag', DataLockErrorCode.INVALID_KEYRING, { exactLength: 16 }),
+        ciphertext: fromB64(encrypted.ciphertext, 'encryptedReadKey.ciphertext', DataLockErrorCode.INVALID_KEYRING, { maxLength: 4096 }),
       },
       aadForKeyring(this.keyId),
       DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING,
@@ -100,7 +94,7 @@ export class PublicKeyDocument {
     writeJson(path, this.raw);
   }
   static read(path) {
-    const document = new PublicKeyDocument(readJson(path));
+    const document = new PublicKeyDocument(readJson(path, MAX_PUBLIC_KEY_JSON_BYTES));
     document.verify();
     return document;
   }
@@ -117,6 +111,7 @@ export class DataEnvelope {
       throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, `Unsupported Data Envelope schema: ${this.raw?.schema}`);
     }
     requireEnvelopeAlg(this.raw);
+    validateEnvelopeFields(this.raw);
   }
   toJSON() {
     return `${JSON.stringify(this.raw, null, 2)}\n`;
@@ -125,6 +120,8 @@ export class DataEnvelope {
     writeJson(path, this.raw);
   }
   static read(path) {
-    return new DataEnvelope(readJson(path));
+    const document = new DataEnvelope(readJson(path));
+    document.verify();
+    return document;
   }
 }

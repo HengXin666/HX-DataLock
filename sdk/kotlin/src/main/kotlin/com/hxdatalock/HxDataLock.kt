@@ -123,7 +123,7 @@ class UserDataLock internal constructor(
 }
 
 private fun validateScryptN(value: Int) {
-    if (value < 16384 || value and (value - 1) != 0) {
-        throw IllegalArgumentException("scryptN must be a power of two and at least 16384")
+    if (value < MIN_SCRYPT_N || value > MAX_SCRYPT_N || value and (value - 1) != 0) {
+        throw IllegalArgumentException("scryptN must be a power of two between $MIN_SCRYPT_N and $MAX_SCRYPT_N")
     }
 }

@@ -28,6 +28,9 @@ from .constants import (
 )
 from .errors import DataLockError, DataLockErrorCode
 
+X25519_SPKI_MAX_BYTES = 512
+WRAPPED_READ_KEY_MAX_BYTES = 4096
+
 
 X25519_SPKI_MAX_BYTES = 512
 WRAPPED_READ_KEY_MAX_BYTES = 4096

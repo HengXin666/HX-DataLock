@@ -89,6 +89,38 @@ class HxDataLockTest {
     }
 
     @Test
+    fun rejectsHardenedUntrustedInputs() {
+        val password = "correct horse battery staple for hx datalock"
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384))
+        val user = HxDataLock.makeUserDataLock(keyring, password)
+        val envelope = user.lockBytes("hello".encodeToByteArray())
+
+        @Suppress("UNCHECKED_CAST")
+        val oversizedKdf = LinkedHashMap(keyring.raw).also { raw ->
+            val encrypted = LinkedHashMap(raw["encryptedReadKey"] as Map<String, Any?>)
+            val kdf = LinkedHashMap(encrypted["kdf"] as Map<String, Any?>)
+            kdf["N"] = 1 shl 30
+            encrypted["kdf"] = kdf
+            raw["encryptedReadKey"] = encrypted
+        }
+        val invalidKdf = assertFailsWith<DataLockException> {
+            Keyring(oversizedKdf).verify()
+        }
+        assertEquals(DataLockErrorCode.INVALID_KEYRING, invalidKdf.code)
+
+        val shortNonce = assertFailsWith<DataLockException> {
+            DataEnvelope(LinkedHashMap(envelope.raw).also { it["nonce"] = "AAAA" }).verify()
+        }
+        assertEquals(DataLockErrorCode.TAMPERED_ENVELOPE, shortNonce.code)
+
+        val maxB64Chars = ((MAX_V1_FILE_BYTES + 2) / 3) * 4
+        val oversizedCiphertext = assertFailsWith<DataLockException> {
+            DataEnvelope(LinkedHashMap(envelope.raw).also { it["ciphertext"] = "A".repeat(maxB64Chars + 4) }).verify()
+        }
+        assertEquals(DataLockErrorCode.OVERSIZED_FILE, oversizedCiphertext.code)
+    }
+
+    @Test
     fun v1ScopeDoesNotExposeSenderDataLock() {
         val publicMembers = HxDataLock::class.java.methods.map { it.name }.toSet()
 

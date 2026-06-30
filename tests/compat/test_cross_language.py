@@ -605,6 +605,57 @@ try {{
     subprocess.run(["node", str(script_path)], check=True)
 
 
+def test_node_sdk_rejects_hardened_untrusted_inputs(tmp_path: Path) -> None:
+    script_path = tmp_path / "node-hardening.mjs"
+    script_path.write_text(
+        f"""
+import {{
+  DataLockErrorCode,
+  createKeyring,
+  makeUserDataLock,
+}} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
+import {{ Keyring, DataEnvelope }} from {str((Path.cwd() / "sdk/node/dist/documents.js").as_uri())!r};
+import {{ MAX_V1_FILE_BYTES }} from {str((Path.cwd() / "sdk/node/dist/constants.js").as_uri())!r};
+
+const password = 'correct horse battery staple for hx datalock';
+const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const user = makeUserDataLock(keyring, {{ masterPassword: password }});
+const envelope = user.lockBytes(Buffer.from('hello'));
+
+const oversizedKdf = structuredClone(keyring.raw);
+oversizedKdf.encryptedReadKey.kdf.N = 2 ** 30;
+try {{
+  new Keyring(oversizedKdf).verify();
+  throw new Error('accepted oversized scrypt N');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.INVALID_KEYRING) throw error;
+}}
+
+const shortNonce = structuredClone(envelope.raw);
+shortNonce.nonce = 'AAAA';
+try {{
+  new DataEnvelope(shortNonce).verify();
+  throw new Error('accepted short nonce');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.TAMPERED_ENVELOPE) throw error;
+}}
+
+const oversizedCiphertext = structuredClone(envelope.raw);
+const maxB64Chars = Math.ceil(MAX_V1_FILE_BYTES / 3) * 4;
+oversizedCiphertext.ciphertext = 'A'.repeat(maxB64Chars + 4);
+try {{
+  new DataEnvelope(oversizedCiphertext).verify();
+  throw new Error('accepted oversized ciphertext');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.OVERSIZED_FILE) throw error;
+}}
+""",
+        encoding="utf-8",
+    )
+
+    subprocess.run(["node", str(script_path)], check=True)
+
+
 def test_simple_python_api_round_trips_file(tmp_path: Path) -> None:
     password = "correct horse battery staple for hx datalock"
     keyring_path = tmp_path / "keyring.hxdl.json"
