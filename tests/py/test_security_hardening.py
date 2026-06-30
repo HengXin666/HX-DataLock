@@ -77,4 +77,4 @@ def test_envelope_verify_rejects_oversized_ciphertext_without_decode():
 
     with pytest.raises(DataLockError) as exc_info:
         DataEnvelope(raw).verify()
-    assert exc_info.value.code == DataLockErrorCode.TAMPERED_ENVELOPE
+    assert exc_info.value.code == DataLockErrorCode.OVERSIZED_FILE

@@ -162,12 +162,18 @@ def validate_envelope_fields(raw: dict[str, Any]) -> None:
     from_b64(raw.get("hkdfSalt"), "hkdfSalt", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=32)
     from_b64(raw.get("nonce"), "nonce", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=12)
     from_b64(raw.get("tag"), "tag", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=16)
-    from_b64(
-        raw.get("ciphertext"),
+    ciphertext = raw.get("ciphertext")
+    if not isinstance(ciphertext, str):
+        raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Missing or invalid base64 field: ciphertext")
+    if len(ciphertext) > _max_b64_chars(MAX_V1_FILE_BYTES):
+        raise DataLockError(DataLockErrorCode.OVERSIZED_FILE, "Data Envelope ciphertext exceeds the v1 size limit")
+    decoded_ciphertext = from_b64(
+        ciphertext,
         "ciphertext",
         error_code=DataLockErrorCode.TAMPERED_ENVELOPE,
-        max_length=MAX_V1_FILE_BYTES,
     )
+    if len(decoded_ciphertext) > MAX_V1_FILE_BYTES:
+        raise DataLockError(DataLockErrorCode.OVERSIZED_FILE, "Data Envelope ciphertext exceeds the v1 size limit")
 
 
 def derive_password_key(master_password: str, kdf: dict[str, Any]) -> bytes:
