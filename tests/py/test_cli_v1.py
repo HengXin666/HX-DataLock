@@ -133,6 +133,69 @@ def test_cli_v1_export_public_lock_and_open_round_trip(tmp_path: Path) -> None:
     assert "INVALID_PUBLIC_KEY_DOCUMENT" in rejected_lock.stderr
 
 
+def test_cli_lock_rejects_public_key_document_key_id_mismatch(tmp_path: Path) -> None:
+    trusted_keyring_path = tmp_path / "trusted-keyring.hxdl.json"
+    trusted_public_path = tmp_path / "trusted-public.hxdl.json"
+    replaced_keyring_path = tmp_path / "replaced-keyring.hxdl.json"
+    replaced_public_path = tmp_path / "replaced-public.hxdl.json"
+    plaintext_path = tmp_path / "payload.bin"
+    envelope_path = tmp_path / "payload.hxdl.json"
+    env = {"HXDL_MASTER_PASSWORD": PASSWORD}
+
+    assert (
+        run_hxdl(
+            "init",
+            "--keyring",
+            str(trusted_keyring_path),
+            "--password-env",
+            "HXDL_MASTER_PASSWORD",
+            "--scrypt-n",
+            "16384",
+            env=env,
+        ).returncode
+        == 0
+    )
+    assert (
+        run_hxdl(
+            "init",
+            "--keyring",
+            str(replaced_keyring_path),
+            "--password-env",
+            "HXDL_MASTER_PASSWORD",
+            "--scrypt-n",
+            "16384",
+            env=env,
+        ).returncode
+        == 0
+    )
+    assert (
+        run_hxdl("export-public", "--keyring", str(trusted_keyring_path), "--out", str(trusted_public_path)).returncode
+        == 0
+    )
+    assert (
+        run_hxdl("export-public", "--keyring", str(replaced_keyring_path), "--out", str(replaced_public_path)).returncode
+        == 0
+    )
+    trusted_key_id = json.loads(trusted_public_path.read_text(encoding="utf-8"))["publicWriteKey"]["keyId"]
+    plaintext_path.write_bytes(b"pin me")
+
+    result = run_hxdl(
+        "lock",
+        "--public",
+        str(replaced_public_path),
+        "--expect-key-id",
+        trusted_key_id,
+        "--in",
+        str(plaintext_path),
+        "--out",
+        str(envelope_path),
+    )
+
+    assert result.returncode != 0
+    assert not envelope_path.exists()
+    assert "INVALID_PUBLIC_KEY_DOCUMENT" in result.stderr
+
+
 def test_cli_lock_rejects_oversized_public_key_document(tmp_path: Path) -> None:
     public_path = tmp_path / "public.hxdl.json"
     plaintext_path = tmp_path / "payload.bin"

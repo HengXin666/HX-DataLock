@@ -16,6 +16,7 @@ from hx_datalock import (
     makeSenderDataLock,
     send_file,
     send_file_with_public_doc,
+    verify_public_key_document_key_id,
 )
 from hx_datalock.constants import MAX_V1_FILE_BYTES
 
@@ -44,6 +45,19 @@ def test_sender_datalock_rejects_full_keyring():
     with pytest.raises(DataLockError) as exc_info:
         makeSenderDataLock(keyring)
     assert exc_info.value.code == DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
+
+
+def test_public_key_document_key_id_pinning_rejects_replaced_document():
+    trusted = export_public_key_document(create_keyring(MASTER_PASSWORD))
+    replaced = export_public_key_document(create_keyring(f"{MASTER_PASSWORD} replacement"))
+
+    with pytest.raises(DataLockError) as exc_info:
+        verify_public_key_document_key_id(replaced, trusted.key_id)
+    assert exc_info.value.code == DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
+
+    with pytest.raises(DataLockError) as sender_exc_info:
+        makeSenderDataLock(replaced, expected_key_id=trusted.key_id)
+    assert sender_exc_info.value.code == DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT
 
 
 def test_legacy_send_file_keeps_v1_keyring_compatibility(tmp_path):

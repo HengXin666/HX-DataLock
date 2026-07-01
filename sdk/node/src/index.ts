@@ -6,5 +6,6 @@ export {
   loadKeyring,
   makeSenderDataLock,
   makeUserDataLock,
+  verifyPublicKeyDocumentKeyId,
 } from './sdk.js';
 export { checkPasswordStrength } from './password-strength.js';

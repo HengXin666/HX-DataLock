@@ -118,7 +118,25 @@ def export_public_key_document(keyring: Keyring) -> PublicKeyDocument:
     return document
 
 
-def makeSenderDataLock(publicKeyDocument: PublicKeyDocument) -> SenderDataLock:
+def verify_public_key_document_key_id(
+    publicKeyDocument: PublicKeyDocument | dict[str, Any],
+    expected_key_id: str,
+) -> PublicKeyDocument:
+    document = publicKeyDocument if isinstance(publicKeyDocument, PublicKeyDocument) else PublicKeyDocument(publicKeyDocument)
+    document.verify()
+    if document.key_id != expected_key_id:
+        raise DataLockError(
+            DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
+            "Public Key Document keyId does not match the expected keyId",
+        )
+    return document
+
+
+def makeSenderDataLock(
+    publicKeyDocument: PublicKeyDocument,
+    *,
+    expected_key_id: str | None = None,
+) -> SenderDataLock:
     if isinstance(publicKeyDocument, Keyring) or (
         isinstance(publicKeyDocument, dict) and publicKeyDocument.get("schema") == KEYRING_SCHEMA
     ):
@@ -134,6 +152,8 @@ def makeSenderDataLock(publicKeyDocument: PublicKeyDocument) -> SenderDataLock:
             "Sender DataLock requires a Public Key Document",
         )
     publicKeyDocument.verify()
+    if expected_key_id is not None:
+        verify_public_key_document_key_id(publicKeyDocument, expected_key_id)
     return SenderDataLock(publicKeyDocument)
 
 
@@ -171,9 +191,13 @@ def send_file_with_public_doc(
     public_key_document_path: str | Path,
     input_path: str | Path,
     output_path: str | Path,
+    *,
+    expected_key_id: str | None = None,
 ) -> DataEnvelope:
     public_key_document = PublicKeyDocument.read(public_key_document_path)
-    envelope = encrypt_message_for_sender(public_key_document, Path(input_path).read_bytes())
+    envelope = makeSenderDataLock(public_key_document, expected_key_id=expected_key_id).lockBytes(
+        Path(input_path).read_bytes()
+    )
     envelope.write(output_path)
     return envelope
 

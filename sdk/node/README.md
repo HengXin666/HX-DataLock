@@ -112,6 +112,12 @@ hxdl-node lock --public public.hxdl.json --in plain.txt --out plain.txt.hxdl.jso
 hxdl-node open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
+发送方环境建议 pin 住预期的 Public Key Document keyId，避免公钥文档被替换后继续加密给错误收件方：
+
+```sh
+node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
+```
+
 ## API
 
 ### `createKeyring(masterPassword, options?)`
@@ -136,6 +142,10 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-onl
 
 创建发送方 DataLock。输入必须是 Public Key Document, 不能是完整 Keyring。
 
+可选参数:
+
+- `expectedKeyId`: 如果提供，SDK 会先确认 Public Key Document 的 `keyId` 与预期值一致；不一致时抛出 `INVALID_PUBLIC_KEY_DOCUMENT`。
+
 返回对象:
 
 - `lockBytes(payloadBytes)`: 加密 `Buffer`、`Uint8Array` 或可转为 Buffer 的数据。
@@ -159,6 +169,10 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-onl
 ### `checkPasswordStrength(masterPassword)`
 
 返回 Password Strength Report。弱主密码会产生 warnings 和 suggestions, 但 v1 不阻止创建 Keyring。
+
+### `verifyPublicKeyDocumentKeyId(publicKeyDocument, expectedKeyId)`
+
+校验 Public Key Document 的 `keyId` 是否匹配预期值。这个 helper 适合应用在构造 Sender DataLock 前做显式 pinning 检查。
 
 ### `DataLockError` 和 `DataLockErrorCode`
 
@@ -188,6 +202,7 @@ try {
 - `exportPublicKeyDocument`
 - `makeSenderDataLock`
 - `makeUserDataLock`
+- `verifyPublicKeyDocumentKeyId`
 - `checkPasswordStrength`
 - `DataLockError`
 - `DataLockErrorCode`

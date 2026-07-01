@@ -52,7 +52,10 @@ def _cmd_init(args: argparse.Namespace) -> None:
 
 
 def _cmd_lock(args: argparse.Namespace) -> None:
-    sender = makeSenderDataLock(PublicKeyDocument.read(args.public))
+    sender = makeSenderDataLock(
+        PublicKeyDocument.read(args.public),
+        expected_key_id=args.expect_key_id,
+    )
     sender.lockFile(args.input, args.output)
     print(f"Data Envelope written: {args.output}")
 
@@ -146,6 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     lock = subcommands.add_parser("lock", help="lock a local file with a Public Key Document")
     lock.add_argument("--public", required=True)
+    lock.add_argument("--expect-key-id")
     lock.add_argument("--in", dest="input", required=True)
     lock.add_argument("--out", dest="output", required=True)
     lock.set_defaults(func=_cmd_lock)

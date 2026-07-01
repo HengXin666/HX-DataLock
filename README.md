@@ -47,7 +47,7 @@ export HXDL_MASTER_PASSWORD="use-a-long-high-entropy-password"
 
 uv run hxdl init --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
-uv run hxdl lock --public public.hxdl.json --in message.txt --out message.hxdl.json
+uv run hxdl lock --public public.hxdl.json --expect-key-id "x25519:..." --in message.txt --out message.hxdl.json
 uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out message.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
@@ -115,3 +115,7 @@ HX-DataLock 不把密码尝试锁定当作离线安全控制: 一旦 Keyring 被
 ## Keyring Check
 
 `.github/workflows/keyring-check.yml` 会在仓库提交了 `keyring.hxdl.json` 时用 CLI 校验它的 v1 结构，并扫描明显的原始私钥标记。如果仓库没有提交 `keyring.hxdl.json`，workflow 会明确输出 skipped；这只表示没有 Keyring 可校验，不表示已经验证过某个 Keyring。当前仓库不要求提交 Keyring。
+
+## Signed Manifests
+
+兼容性 manifest 和发布安全元数据可以用独立 signed manifest 包装认证，不改变 Keyring、Public Key Document 或 Data Envelope 格式。设计见 [ADR 0022](docs/adr/0022-signed-security-and-compatibility-manifests.md)。当前原型脚本是 `scripts/hxdl-manifest-sign.py`，用于 CI/release rehearsal；正式公开信任发现和自动 key rotation 不属于 v1 范围。

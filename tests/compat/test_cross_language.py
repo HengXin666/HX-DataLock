@@ -533,6 +533,43 @@ def test_node_cli_rejects_oversized_v1_files(tmp_path: Path) -> None:
     assert DataLockErrorCode.OVERSIZED_FILE.value in result.stderr
 
 
+def test_node_cli_lock_rejects_public_key_document_key_id_mismatch(tmp_path: Path) -> None:
+    trusted_keyring_path = tmp_path / "trusted-keyring.hxdl.json"
+    replaced_keyring_path = tmp_path / "replaced-keyring.hxdl.json"
+    trusted_public_path = tmp_path / "trusted-public.hxdl.json"
+    replaced_public_path = tmp_path / "replaced-public.hxdl.json"
+    plain_path = tmp_path / "plain.txt"
+    output_path = tmp_path / "sealed.hxdl.json"
+    trusted_keyring = init_keyring(trusted_keyring_path, PASSWORD, scrypt_n=16384)
+    replaced_keyring = init_keyring(replaced_keyring_path, f"{PASSWORD} replacement", scrypt_n=16384)
+    export_public_key_document(trusted_keyring).write(trusted_public_path)
+    export_public_key_document(replaced_keyring).write(replaced_public_path)
+    trusted_key_id = export_public_key_document(trusted_keyring).key_id
+    plain_path.write_bytes(b"pin me")
+
+    result = subprocess.run(
+        [
+            *_node_cli(),
+            "lock",
+            "--public",
+            str(replaced_public_path),
+            "--expect-key-id",
+            trusted_key_id,
+            "--in",
+            str(plain_path),
+            "--out",
+            str(output_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not output_path.exists()
+    assert DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT.value in result.stderr
+
+
 def test_node_cli_lock_rejects_oversized_public_key_document(tmp_path: Path) -> None:
     public_path = tmp_path / "public.hxdl.json"
     plain_path = tmp_path / "plain.txt"
@@ -594,11 +631,13 @@ import {{
   exportPublicKeyDocument,
   makeSenderDataLock,
   makeUserDataLock,
+  verifyPublicKeyDocumentKeyId,
 }} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
 const keyring = createKeyring(password, {{ scryptN: 16384 }});
 const publicDocument = exportPublicKeyDocument(keyring);
+const replacedPublicDocument = exportPublicKeyDocument(createKeyring(`${{password}} replacement`, {{ scryptN: 16384 }}));
 const report = checkPasswordStrength('password');
 const sender = makeSenderDataLock(publicDocument);
 const envelope = sender.lockText('typescript sdk payload');
@@ -614,6 +653,18 @@ for (const name of ['openBytes', 'openText', 'openFile', 'lockBytes', 'lockText'
 try {{
   makeSenderDataLock(keyring);
   throw new Error('accepted keyring as sender input');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT) throw error;
+}}
+try {{
+  verifyPublicKeyDocumentKeyId(replacedPublicDocument, publicDocument.keyId);
+  throw new Error('accepted replaced public document');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT) throw error;
+}}
+try {{
+  makeSenderDataLock(replacedPublicDocument, {{ expectedKeyId: publicDocument.keyId }});
+  throw new Error('accepted replaced public document for sender');
 }} catch (error) {{
   if (error.code !== DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT) throw error;
 }}

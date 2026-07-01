@@ -21,6 +21,7 @@ from .sdk import (
     send_file,
     send_file_with_public_doc,
     verify_keyring_file,
+    verify_public_key_document_key_id,
     verify_public_key_document_file,
 )
 
@@ -47,5 +48,6 @@ __all__ = [
     "send_file",
     "send_file_with_public_doc",
     "verify_keyring_file",
+    "verify_public_key_document_key_id",
     "verify_public_key_document_file",
 ]

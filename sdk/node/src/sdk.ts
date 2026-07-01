@@ -100,12 +100,24 @@ export function verifyPublicKeyDocumentFile(path, options: any = {}) {
   return document;
 }
 
-export function makeSenderDataLock(publicKeyDocument) {
+export function verifyPublicKeyDocumentKeyId(publicKeyDocument, expectedKeyId) {
+  const document = publicKeyDocument instanceof PublicKeyDocument ? publicKeyDocument : new PublicKeyDocument(publicKeyDocument);
+  document.verify();
+  if (document.keyId !== expectedKeyId) {
+    throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document keyId does not match the expected keyId');
+  }
+  return document;
+}
+
+export function makeSenderDataLock(publicKeyDocument, options: any = {}) {
   if (publicKeyDocument instanceof Keyring || publicKeyDocument?.schema === KEYRING_SCHEMA || publicKeyDocument?.raw?.schema === KEYRING_SCHEMA) {
     throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Sender DataLock requires a Public Key Document, not a full Keyring');
   }
   const document = publicKeyDocument instanceof PublicKeyDocument ? publicKeyDocument : new PublicKeyDocument(publicKeyDocument);
   document.verify();
+  if (options.expectedKeyId || options.expected_key_id) {
+    verifyPublicKeyDocumentKeyId(document, options.expectedKeyId || options.expected_key_id);
+  }
   return new SenderDataLock(document);
 }
 

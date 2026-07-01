@@ -159,6 +159,12 @@ hxdl open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.opene
 
 SDK 不读取环境变量。只有 CLI 会在传入 `--password-env` 时读取指定环境变量。
 
+发送方环境建议 pin 住预期的 Public Key Document keyId，避免公钥文档被替换后继续加密给错误收件方：
+
+```sh
+uv run hxdl lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
+```
+
 ## API
 
 ### `create_keyring(master_password, *, scrypt_n=DEFAULT_SCRYPT_N)`
@@ -183,6 +189,10 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台
 
 创建发送方 DataLock。输入必须是 Public Key Document, 不能是完整 Keyring。
 
+可选参数:
+
+- `expected_key_id`: 如果提供，SDK 会先确认 Public Key Document 的 `keyId` 与预期值一致；不一致时抛出 `INVALID_PUBLIC_KEY_DOCUMENT`。
+
 返回对象:
 
 - `lockBytes(payload_bytes)`: 加密 `bytes`。
@@ -206,6 +216,12 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台
 ### `send_file_with_public_doc(public_key_document_path, input_path, output_path)`
 
 使用 Public Key Document 加密本地文件并写出 Data Envelope。推荐发送方环境使用这个 helper, 避免把完整 Keyring 传入写入环境。
+
+可选参数 `expected_key_id` 可用于同样的 keyId pinning。
+
+### `verify_public_key_document_key_id(publicKeyDocument, expected_key_id)`
+
+校验 Public Key Document 的 `keyId` 是否匹配预期值。这个 helper 适合应用在构造 Sender DataLock 前做显式 pinning 检查。
 
 ### `send_file(keyring_path, input_path, output_path)`
 
