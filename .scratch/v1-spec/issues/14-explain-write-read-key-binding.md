@@ -1,4 +1,4 @@
-Status: 待办
+Status: 已完成
 
 # Explain Write Key and Read Key binding in plain language
 
@@ -19,3 +19,10 @@ Users should be able to understand that the Write Key is the public half of an X
 ## Additional context
 
 This is a documentation issue around the Crypto Codec threat model. The explanation should use project terms: Keyring, Public Key Document, Write Key, Read Key, Data Envelope, Write-only Sender, User DataLock, Master Password, and Offline Guessing Attack.
+
+## Comments
+
+- Added a plain-language README section explaining that the Write Key is the public X25519 half, the Read Key is the matching private half encrypted in the Keyring, and Write-only Senders can Lock but cannot Open because they cannot derive the Read Key from the Write Key.
+- Updated the v1 specification with the same binding and Offline Guessing Attack explanation.
+- Updated the data-flow document to remove the stale suggestion that Keyrings can be placed in Public Storage, and clarified that Public Key Documents belong in public/automation environments.
+- Added the missing Node SDK Keyring private-file note to match Python and Kotlin docs.

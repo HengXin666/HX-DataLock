@@ -1,4 +1,4 @@
-Status: 交给代理
+Status: 已完成
 
 # Align Python Keyring creation and Public Key Document export with v1
 

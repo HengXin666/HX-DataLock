@@ -122,6 +122,8 @@ hxdl-node open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.
 
 - `scryptN`: scrypt N 参数, 默认使用 SDK 内部 v1 默认值。
 
+Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-only 文件模式写出；应用仍应把 Keyring 当作私有本地文件保存和备份。
+
 ### `loadKeyring(path)`
 
 从 JSON 文件读取并校验 Keyring。
@@ -156,7 +158,7 @@ hxdl-node open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.
 
 ### `checkPasswordStrength(masterPassword)`
 
-校验主密码强度。不满足要求时抛出 `DataLockError`。
+返回 Password Strength Report。弱主密码会产生 warnings 和 suggestions, 但 v1 不阻止创建 Keyring。
 
 ### `DataLockError` 和 `DataLockErrorCode`
 

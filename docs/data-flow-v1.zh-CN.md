@@ -66,7 +66,7 @@ Master Password + Keyring
 
 流程：
 
-1. SDK 先运行 Password Strength Policy。v1 只产生 Password Strength Report，不阻止弱密码继续创建 Keyring。
+1. Python/Node full SDK 先运行 Password Strength Policy。v1 只产生 Password Strength Report，不阻止弱密码继续创建 Keyring。Kotlin v1 不暴露 Password Strength Report。
 2. 校验 `scryptN`：必须是 2 的幂且不小于 `16384`。默认值是 `2^18 = 262144`。
 3. 生成一对 X25519 密钥：
    - 公钥是 Write Key。
@@ -139,7 +139,9 @@ Keyring 结构：
 重要细节：
 
 - Master Password 不写入 Keyring、Public Key Document、Data Envelope。
-- Keyring 可放在 GitHub 等 Public Storage，但如果泄漏，攻击者可以离线猜 Master Password。
+- Keyring 应作为私有本地文件保存和备份。如果完整 Keyring 被复制，攻击者可以离线猜 Master Password 来尝试解封 encrypted Read Key。
+- 适合放入 GitHub Actions、对象存储或其他公共/自动化环境的是 Public Key Document，不是完整 Keyring。
+- Write Key 是 X25519 公钥；Read Key 是匹配私钥，被 Master Password 加密后存在 Keyring 中。Write-only Sender 能用 Write Key Lock 新 Data Envelope，但不能从 Write Key 推导出 Read Key，也不能 Open 已有密文。
 - `createdAt` 是展示和调试元数据，不参与 AAD，不是业务时间戳。
 - SDK 不缓存 Master Password。User DataLock 会缓存解包后的 Read Key，直到 `close()` 或对象释放。
 
@@ -330,13 +332,16 @@ hxdl.envelope.v1:<recipientKeyId>:X25519:HKDF-SHA256:AES-256-GCM
 - Text helper 在 Open 后严格按 UTF-8 解码；无效 UTF-8 抛出 `INVALID_UTF8`。
 - `close()` 会丢弃 User DataLock 对 Read Key 的引用；托管运行时内存清零只能是 best effort。
 
-## 5. 公共存储可见与不可见数据
+## 5. 存储可见与不可见数据
 
 可放入 Public Storage 的内容：
 
-- Keyring。
 - Public Key Document。
 - Data Envelope。
+
+应作为私有本地文件保存和备份的内容：
+
+- Keyring。
 
 Public Storage 可见内容：
 
@@ -345,9 +350,10 @@ Public Storage 可见内容：
 - Recipient Key ID / Write Key ID。
 - 算法标识。
 - Write Key 公钥。
-- encrypted Read Key 的 KDF 参数、salt、AEAD nonce/tag、ciphertext。
 - Data Envelope 的 ephemeral public key、HKDF salt、AES-GCM nonce/tag、ciphertext。
 - Data Envelope 大小和近似 payload 大小。
+
+如果完整 Keyring 被复制，攻击者还会看到 encrypted Read Key 的 KDF 参数、salt、AEAD nonce/tag 和 ciphertext，并可以离线猜 Master Password。
 
 Public Storage 不应得到：
 
