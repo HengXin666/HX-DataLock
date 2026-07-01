@@ -133,6 +133,27 @@ def test_cli_v1_export_public_lock_and_open_round_trip(tmp_path: Path) -> None:
     assert "INVALID_PUBLIC_KEY_DOCUMENT" in rejected_lock.stderr
 
 
+def test_cli_lock_rejects_oversized_public_key_document(tmp_path: Path) -> None:
+    public_path = tmp_path / "public.hxdl.json"
+    plaintext_path = tmp_path / "payload.bin"
+    envelope_path = tmp_path / "payload.hxdl.json"
+    public_path.write_text(" " * (64 * 1024 + 1), encoding="utf-8")
+    plaintext_path.write_bytes(b"payload")
+
+    result = run_hxdl(
+        "lock",
+        "--public",
+        str(public_path),
+        "--in",
+        str(plaintext_path),
+        "--out",
+        str(envelope_path),
+    )
+
+    assert result.returncode != 0
+    assert "OVERSIZED_FILE" in result.stderr
+
+
 def test_cli_verify_keyring_and_public_do_not_require_master_password(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     public_path = tmp_path / "public.hxdl.json"

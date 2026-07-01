@@ -18,3 +18,7 @@ export function writeJson(path, value) {
   mkdirSync(dirname(resolve(path)), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
+
+export function isStableJson(path, value) {
+  return readFileSync(path, 'utf8') === `${JSON.stringify(value, null, 2)}\n`;
+}

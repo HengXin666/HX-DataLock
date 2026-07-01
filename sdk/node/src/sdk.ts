@@ -21,6 +21,7 @@ import {
   validateScryptN,
 } from './crypto-codec.js';
 import { readJson } from './json.js';
+import { isStableJson } from './json.js';
 import { checkPasswordStrength } from './password-strength.js';
 
 export function createKeyring(masterPassword, options: any = {}) {
@@ -71,6 +72,14 @@ export function loadKeyring(path) {
   return keyring;
 }
 
+export function verifyKeyringFile(path, options: any = {}) {
+  const keyring = loadKeyring(path);
+  if (options.requireStableJson && !isStableJson(path, keyring.raw)) {
+    throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Keyring does not use stable v1 JSON');
+  }
+  return keyring;
+}
+
 export function exportPublicKeyDocument(keyring) {
   const fullKeyring = keyring instanceof Keyring ? keyring : new Keyring(keyring);
   fullKeyring.verify();
@@ -80,6 +89,14 @@ export function exportPublicKeyDocument(keyring) {
     publicWriteKey: { ...fullKeyring.raw.publicWriteKey },
   });
   document.verify();
+  return document;
+}
+
+export function verifyPublicKeyDocumentFile(path, options: any = {}) {
+  const document = PublicKeyDocument.read(path);
+  if (options.requireStableJson && !isStableJson(path, document.raw)) {
+    throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document does not use stable v1 JSON');
+  }
   return document;
 }
 

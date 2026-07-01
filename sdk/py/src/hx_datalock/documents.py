@@ -15,7 +15,7 @@ from .crypto_codec import (
     validate_public_write_key,
 )
 from .errors import DataLockError, DataLockErrorCode
-from .json import dumps_stable_json, read_json_document, write_json_document
+from .json import dumps_stable_json, read_json_document, write_json_document, write_private_json_document
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Keyring:
         return dumps_stable_json(self.raw)
 
     def write(self, path: str | Path) -> None:
-        write_json_document(path, self.raw)
+        write_private_json_document(path, self.raw)
 
     def unwrap_read_key(self, master_password: str) -> x25519.X25519PrivateKey:
         self.verify()
@@ -95,6 +95,11 @@ class PublicKeyDocument:
         )
 
     def verify(self) -> None:
+        if self.raw.get("schema") == KEYRING_SCHEMA:
+            raise DataLockError(
+                DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
+                "Public Key Document must not be a full Keyring",
+            )
         if self.raw.get("schema") != PUBLIC_KEY_SCHEMA:
             raise DataLockError(
                 DataLockErrorCode.UNSUPPORTED_SCHEMA,

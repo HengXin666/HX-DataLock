@@ -42,3 +42,13 @@ def test_keyring_check_workflow_builds_node_cli_before_using_it() -> None:
     assert "node sdk/node/hx-datalock.mjs verify-keyring" in text
     assert "npm ci" in text
     assert "npm run build" in text
+
+
+def test_keyring_check_workflow_makes_missing_keyring_skip_explicit() -> None:
+    workflow = Path(".github/workflows/keyring-check.yml")
+
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "Keyring validation skipped: no keyring.hxdl.json is committed in this repository." in text
+    assert "This check did not validate a Keyring document." in text
+    assert "Raw private key scan skipped: no keyring.hxdl.json is committed in this repository." in text

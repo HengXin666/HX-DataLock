@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import stat
 
 import pytest
 
@@ -55,6 +57,19 @@ def test_legacy_send_file_keeps_v1_keyring_compatibility(tmp_path):
 
     envelope = send_file(keyring_path, input_path, output_path)
     assert envelope.raw["recipientKeyId"] == keyring.key_id
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file mode assertions require a POSIX platform")
+def test_keyring_write_converges_to_owner_read_write_permissions(tmp_path):
+    keyring = create_keyring(MASTER_PASSWORD)
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    keyring_path.write_text("{}", encoding="utf-8")
+    keyring_path.chmod(0o644)
+
+    keyring.write(keyring_path)
+
+    mode = stat.S_IMODE(keyring_path.stat().st_mode)
+    assert mode == 0o600
 
 
 def test_keyring_verify_rejects_oversized_scrypt_n():

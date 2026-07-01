@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,19 @@ def read_json_document(path: str | Path, *, max_bytes: int = MAX_ENVELOPE_JSON_B
 
 def write_json_document(path: str | Path, raw: dict[str, Any]) -> None:
     Path(path).write_text(dumps_stable_json(raw), encoding="utf-8")
+
+
+def write_private_json_document(path: str | Path, raw: dict[str, Any]) -> None:
+    document_path = Path(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    mode = stat.S_IRUSR | stat.S_IWUSR
+    if os.name == "posix" and document_path.exists():
+        document_path.chmod(mode)
+    fd = os.open(document_path, flags, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(dumps_stable_json(raw))
+    if os.name == "posix":
+        document_path.chmod(mode)
 
 
 def is_stable_json_document(path: str | Path, stable_json: str) -> bool:

@@ -47,14 +47,17 @@ jobs:
         shell: bash
         run: |
           if [ ! -f keyring.hxdl.json ]; then
-            echo "No keyring.hxdl.json committed yet; run local init first."
+            echo "Keyring validation skipped: no keyring.hxdl.json is committed in this repository."
+            echo "This check did not validate a Keyring document."
             exit 0
           fi
+          echo "Validating committed keyring.hxdl.json with the Node CLI."
           node sdk/node/hx-datalock.mjs verify-keyring --keyring keyring.hxdl.json
       - name: Ensure no obvious raw private key material is committed
         shell: bash
         run: |
           if [ ! -f keyring.hxdl.json ]; then
+            echo "Raw private key scan skipped: no keyring.hxdl.json is committed in this repository."
             exit 0
           fi
           if grep -E 'PRIVATE KEY|BEGIN|pkcs8|privateKey' keyring.hxdl.json; then

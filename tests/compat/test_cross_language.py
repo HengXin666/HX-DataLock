@@ -533,6 +533,56 @@ def test_node_cli_rejects_oversized_v1_files(tmp_path: Path) -> None:
     assert DataLockErrorCode.OVERSIZED_FILE.value in result.stderr
 
 
+def test_node_cli_lock_rejects_oversized_public_key_document(tmp_path: Path) -> None:
+    public_path = tmp_path / "public.hxdl.json"
+    plain_path = tmp_path / "plain.txt"
+    output_path = tmp_path / "sealed.hxdl.json"
+    public_path.write_text(" " * (64 * 1024 + 1), encoding="utf-8")
+    plain_path.write_bytes(b"payload")
+
+    result = subprocess.run(
+        [
+            *_node_cli(),
+            "lock",
+            "--public",
+            str(public_path),
+            "--in",
+            str(plain_path),
+            "--out",
+            str(output_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert DataLockErrorCode.OVERSIZED_FILE.value in result.stderr
+
+
+def test_node_cli_verify_rejects_non_stable_public_key_document(tmp_path: Path) -> None:
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    public_path = tmp_path / "public.hxdl.json"
+    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384)
+    public_document = export_public_key_document(keyring)
+    public_path.write_text(__import__("json").dumps(public_document.raw, separators=(",", ":")), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            *_node_cli(),
+            "verify-public",
+            "--public",
+            str(public_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT.value in result.stderr
+
+
 def test_node_sdk_exposes_v1_datalock_surface(tmp_path: Path) -> None:
     script_path = tmp_path / "node-sdk-surface.mjs"
     script_path.write_text(

@@ -5,6 +5,8 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
 
 class HxDataLockTest {
     @Test
@@ -48,6 +50,34 @@ class HxDataLockTest {
         assertFalse(publicKeyDocument.raw.containsKey("encryptedReadKey"))
         assertEquals(listOf("schema", "createdAt", "recipientKeyId", "alg", "ephemeralPublicKey", "hkdfSalt", "nonce", "tag", "ciphertext"), envelope.raw.keys.toList())
         assertEquals("stable json", user.openText(DataEnvelope(StableJson.parse(envelope.toJson()))))
+    }
+
+    @Test
+    fun keyringWriteConvergesToOwnerReadWritePermissionsOnPosixFileSystems() {
+        val path = Files.createTempFile("hxdl-keyring", ".json")
+        try {
+            if ("posix" !in path.fileSystem.supportedFileAttributeViews()) return
+            val keyring = HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384))
+            Files.writeString(path, "{}")
+            Files.setPosixFilePermissions(
+                path,
+                setOf(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.GROUP_READ,
+                    PosixFilePermission.OTHERS_READ,
+                ),
+            )
+
+            keyring.write(path)
+
+            assertEquals(
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                Files.getPosixFilePermissions(path),
+            )
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test

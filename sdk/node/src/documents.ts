@@ -79,6 +79,9 @@ export class PublicKeyDocument {
     return validatePublicWriteKey(this.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT);
   }
   verify() {
+    if (this.raw?.schema === KEYRING_SCHEMA) {
+      throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document must not be a full Keyring');
+    }
     if (this.raw?.schema !== PUBLIC_KEY_SCHEMA) {
       throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, `Unsupported Public Key Document schema: ${this.raw?.schema}`);
     }

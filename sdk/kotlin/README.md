@@ -34,6 +34,8 @@ HxDataLock.makeUserDataLock(keyring, password).use { user ->
 
 生产默认 `scryptN` 为 `262144`。测试可以显式传入 `16384` 以缩短运行时间，生成的 Keyring 会记录实际参数。
 
+Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX-capable JVM 文件系统上会把文件权限收敛为仅所有者可读写；不支持 POSIX 权限的文件系统会退回普通写入。应用仍应把 Keyring 当作私有本地文件保存和备份。
+
 ## 运行测试
 
 ```bash

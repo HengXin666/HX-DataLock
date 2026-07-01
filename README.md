@@ -105,3 +105,7 @@ Benchmark 输出是 JSON lines, 覆盖 Keyring unlock、`lockBytes`、`openBytes
 HX-DataLock 是 Crypto Codec。应用仍然需要自己处理 Master Password 的生成和保存、Keyring 备份、Public Key Document 真实性、公共存储的删除/重放/冲突解决、Payload Bytes 的业务序列化, 以及设备入侵、运行时内存抓取、恶意依赖和 UI 钓鱼等本地风险。
 
 HX-DataLock 不把密码尝试锁定当作离线安全控制: 一旦 Keyring 被复制, 攻击者可以脱离服务端限制进行猜测。真正有效的防线是高熵 Master Password、scrypt 成本和尽量减少 Master Password 驻留。
+
+## Keyring Check
+
+`.github/workflows/keyring-check.yml` 会在仓库提交了 `keyring.hxdl.json` 时用 CLI 校验它的 v1 结构，并扫描明显的原始私钥标记。如果仓库没有提交 `keyring.hxdl.json`，workflow 会明确输出 skipped；这只表示没有 Keyring 可校验，不表示已经验证过某个 Keyring。当前仓库不要求提交 Keyring。

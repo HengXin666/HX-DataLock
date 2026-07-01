@@ -12,7 +12,6 @@ from .sdk import (
     DEFAULT_SCRYPT_N,
     DataLockError,
     DataLockErrorCode,
-    KEYRING_SCHEMA,
     PublicKeyDocument,
     export_public_key_document,
     init_keyring,
@@ -53,13 +52,7 @@ def _cmd_init(args: argparse.Namespace) -> None:
 
 
 def _cmd_lock(args: argparse.Namespace) -> None:
-    raw_public = json.loads(Path(args.public).read_text(encoding="utf-8"))
-    if raw_public.get("schema") == KEYRING_SCHEMA:
-        raise DataLockError(
-            DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
-            "lock requires a Public Key Document, not a full Keyring",
-        )
-    sender = makeSenderDataLock(PublicKeyDocument(raw_public))
+    sender = makeSenderDataLock(PublicKeyDocument.read(args.public))
     sender.lockFile(args.input, args.output)
     print(f"Data Envelope written: {args.output}")
 

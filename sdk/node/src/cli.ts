@@ -3,16 +3,17 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SCRYPT_N, KEYRING_SCHEMA } from './constants.js';
-import { DataLockError, DataLockErrorCode } from './errors.js';
+import { DEFAULT_SCRYPT_N } from './constants.js';
+import { DataLockError } from './errors.js';
 import { PublicKeyDocument } from './documents.js';
-import { readJson } from './json.js';
 import {
   createKeyring,
   exportPublicKeyDocument,
   loadKeyring,
   makeSenderDataLock,
   makeUserDataLock,
+  verifyKeyringFile,
+  verifyPublicKeyDocumentFile,
 } from './sdk.js';
 
 function usage() {
@@ -118,14 +119,7 @@ function commandLock(options) {
   if (!options.public || !options.in || !options.out) {
     throw new Error('lock requires --public, --in, and --out');
   }
-  const rawPublic = readJson(options.public);
-  if (rawPublic.schema === KEYRING_SCHEMA) {
-    throw new DataLockError(
-      DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
-      'lock requires a Public Key Document, not a full Keyring',
-    );
-  }
-  makeSenderDataLock(new PublicKeyDocument(rawPublic)).lockFile(options.in, options.out);
+  makeSenderDataLock(PublicKeyDocument.read(options.public)).lockFile(options.in, options.out);
   console.log(`Data Envelope written: ${options.out}`);
 }
 
@@ -141,7 +135,7 @@ async function commandOpen(options) {
 }
 
 function commandVerifyKeyring(options) {
-  const keyring = loadKeyring(options.keyring || 'keyring.hxdl.json');
+  const keyring = verifyKeyringFile(options.keyring || 'keyring.hxdl.json', { requireStableJson: true });
   console.log(`Valid Keyring: ${keyring.keyId}`);
 }
 
@@ -149,7 +143,7 @@ function commandVerifyPublic(options) {
   if (!options.public) {
     throw new Error('verify-public requires --public');
   }
-  const document = PublicKeyDocument.read(options.public);
+  const document = verifyPublicKeyDocumentFile(options.public, { requireStableJson: true });
   console.log(`Valid Public Key Document: ${document.keyId}`);
 }
 

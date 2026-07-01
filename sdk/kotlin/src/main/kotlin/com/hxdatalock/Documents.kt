@@ -1,13 +1,36 @@
 package com.hxdatalock
 
 import java.nio.file.Files
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 
 private fun readJsonDocument(path: Path, maxBytes: Int): LinkedHashMap<String, Any?> {
     if (Files.size(path) > maxBytes) {
         throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "JSON document exceeds the v1 size limit")
     }
     return StableJson.parse(Files.readString(path))
+}
+
+private fun writeJsonDocument(path: Path, text: String) {
+    Files.writeString(path, text)
+}
+
+private fun writePrivateJsonDocument(path: Path, text: String) {
+    val permissions = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+    if ("posix" in path.fileSystem.supportedFileAttributeViews()) {
+        try {
+            Files.createFile(path, PosixFilePermissions.asFileAttribute(permissions))
+        } catch (_: FileAlreadyExistsException) {
+            Files.setPosixFilePermissions(path, permissions)
+        }
+        Files.writeString(path, text, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+        Files.setPosixFilePermissions(path, permissions)
+    } else {
+        Files.writeString(path, text)
+    }
 }
 
 data class Keyring(val raw: LinkedHashMap<String, Any?>) {
@@ -26,7 +49,7 @@ data class Keyring(val raw: LinkedHashMap<String, Any?>) {
     fun toJson(): String = StableJson.stringify(raw)
 
     fun write(path: Path) {
-        Files.writeString(path, toJson())
+        writePrivateJsonDocument(path, toJson())
     }
 
     companion object {
@@ -53,7 +76,7 @@ data class DataEnvelope(val raw: LinkedHashMap<String, Any?>) {
     fun toJson(): String = StableJson.stringify(raw)
 
     fun write(path: Path) {
-        Files.writeString(path, toJson())
+        writeJsonDocument(path, toJson())
     }
 
     companion object {
@@ -81,7 +104,7 @@ data class PublicKeyDocument(val raw: LinkedHashMap<String, Any?>) {
     fun toJson(): String = StableJson.stringify(raw)
 
     fun write(path: Path) {
-        Files.writeString(path, toJson())
+        writeJsonDocument(path, toJson())
     }
 
     companion object {
