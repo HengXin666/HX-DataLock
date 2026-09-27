@@ -40,6 +40,57 @@ def test_password_strength_report_warns_but_does_not_block_weak_passwords() -> N
     assert keyring.raw["schema"] == "hxdl.keyring.v1"
 
 
+@pytest.mark.parametrize(
+    "password",
+    [
+        "password",
+        "123456",
+        "iloveyou",
+        "Password1",
+        "P@ssw0rd",
+        "Aa123456",
+        "Woaini1314",
+        "admin123",
+    ],
+)
+def test_strength_report_flags_dictionary_passwords(password: str) -> None:
+    """These were measured at dictionary ranks 0-2006 by the crack audit.
+
+    The old estimator credited them 27-42 bits because it only counted length and
+    alphabet size, while a rented cluster recovers them in under three minutes at
+    the default scrypt parameters.
+    """
+    report = check_password_strength(password)
+
+    assert report["compromised"] is True
+    assert report["level"] == "weak"
+    assert report["estimatedEntropyBits"] <= 20
+    assert any("common-password lists" in warning for warning in report["warnings"])
+
+
+def test_strength_report_does_not_flag_a_passphrase_or_a_random_string() -> None:
+    # A passphrase is the shape v1 recommends, so it must reach the top tier.
+    passphrase = check_password_strength("correct horse battery staple for hx datalock")
+    assert passphrase["compromised"] is False
+    assert passphrase["level"] in {"good", "strong"}
+    assert passphrase["warnings"] == []
+
+    # An 18-character random string is not in any dictionary and gets no warning,
+    # but it is below the length thresholds, so it is reported as fair rather
+    # than good. The point of this assertion is only that dictionary membership
+    # does not fire on a random string.
+    random_string = check_password_strength("Tz9kLm4Qw2Xp7Vn5Rb")
+    assert random_string["compromised"] is False
+    assert random_string["warnings"] == []
+
+
+def test_strength_report_flags_repetition_and_sequences() -> None:
+    for password in ("aaaaaaaa", "abcabcabc"):
+        report = check_password_strength(password)
+        assert report["level"] == "weak"
+        assert any("repetition" in warning for warning in report["warnings"])
+
+
 def test_master_password_uses_nfc_normalization_for_unlock() -> None:
     decomposed_password = "Cafe\u0301 passphrase for hx datalock"
     composed_password = "Caf\u00e9 passphrase for hx datalock"
