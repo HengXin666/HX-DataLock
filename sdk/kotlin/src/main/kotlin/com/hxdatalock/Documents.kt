@@ -15,7 +15,14 @@ private fun readJsonDocument(path: Path, maxBytes: Int): LinkedHashMap<String, A
 }
 
 private fun writeJsonDocument(path: Path, text: String) {
-    Files.writeString(path, text)
+    // Converge an existing file's mode rather than only setting it at creation,
+    // matching the Keyring writer and the other SDKs.
+    if ("posix" in path.fileSystem.supportedFileAttributeViews()) {
+        Files.writeString(path, text)
+        Files.setPosixFilePermissions(path, setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))
+    } else {
+        Files.writeString(path, text)
+    }
 }
 
 private fun writePrivateJsonDocument(path: Path, text: String) {
@@ -41,6 +48,7 @@ data class Keyring(val raw: LinkedHashMap<String, Any?>) {
         if (raw["schema"] != KEYRING_SCHEMA) {
             throw DataLockException(DataLockErrorCode.UNSUPPORTED_SCHEMA, "Unsupported Keyring schema: ${raw["schema"]}")
         }
+        CryptoCodec.requireCreationTime(raw, DataLockErrorCode.INVALID_KEYRING)
         val encrypted = raw.mapField("encryptedReadKey", DataLockErrorCode.INVALID_KEYRING)
         CryptoCodec.validateKeyringEncryptedReadKey(encrypted)
         CryptoCodec.loadPublicWriteKey(raw, DataLockErrorCode.INVALID_KEYRING)
@@ -66,6 +74,7 @@ data class DataEnvelope(val raw: LinkedHashMap<String, Any?>) {
         if (raw["schema"] != ENVELOPE_SCHEMA) {
             throw DataLockException(DataLockErrorCode.UNSUPPORTED_SCHEMA, "Unsupported Data Envelope schema: ${raw["schema"]}")
         }
+        CryptoCodec.requireCreationTime(raw, DataLockErrorCode.TAMPERED_ENVELOPE)
         val alg = raw.mapField("alg", DataLockErrorCode.TAMPERED_ENVELOPE)
         if (alg != ENVELOPE_ALG) {
             throw DataLockException(DataLockErrorCode.UNSUPPORTED_ALGORITHM, "Data Envelope must use X25519, HKDF-SHA256, and AES-256-GCM")
@@ -98,6 +107,7 @@ data class PublicKeyDocument(val raw: LinkedHashMap<String, Any?>) {
         if (raw.containsKey("encryptedReadKey")) {
             throw DataLockException(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, "Public Key Document must not contain encrypted Read Key material")
         }
+        CryptoCodec.requireCreationTime(raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT)
         CryptoCodec.loadPublicWriteKey(raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT)
     }
 

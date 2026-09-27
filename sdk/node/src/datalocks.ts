@@ -130,7 +130,14 @@ export class UserDataLock {
       if (error instanceof DataLockError) throw error;
       throw new DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, 'Invalid Data Envelope public key');
     }
-    const sharedSecret = diffieHellman({ privateKey: readKey, publicKey: ephemeralPublicKey });
+    let sharedSecret;
+    try {
+      sharedSecret = diffieHellman({ privateKey: readKey, publicKey: ephemeralPublicKey });
+    } catch (error) {
+      // A low-order point makes OpenSSL refuse the exchange. Rethrowing a bare
+      // ERR_OSSL_* error would bypass the stable error-code contract.
+      throw new DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, 'Invalid Data Envelope public key');
+    }
     const contentKey = Buffer.from(hkdfSync(
       'sha256',
       sharedSecret,
@@ -150,10 +157,12 @@ export class UserDataLock {
     );
   }
   openText(envelope) {
+    // Decryption runs first so its failures keep their own error code; only a
+    // decoding failure of successfully decrypted bytes is INVALID_UTF8.
+    const bytes = this.openBytes(envelope);
     try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(this.openBytes(envelope));
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch (error) {
-      if (error instanceof DataLockError) throw error;
       throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'Data Envelope payload is not valid UTF-8');
     }
   }

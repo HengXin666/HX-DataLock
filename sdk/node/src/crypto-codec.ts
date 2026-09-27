@@ -201,10 +201,29 @@ export function validateKeyringEncryptedReadKey(encrypted) {
   fromB64(encrypted.ciphertext, 'encryptedReadKey.ciphertext', DataLockErrorCode.INVALID_KEYRING, { maxLength: WRAPPED_READ_KEY_MAX_BYTES });
 }
 
+const CREATION_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * Require Creation Time to be an ISO-8601 UTC millisecond string.
+ *
+ * Creation Time is deliberately outside the AAD (ADR 0015), so anyone holding a
+ * Data Envelope can rewrite it. Leaving the field unvalidated meant it could be
+ * any JSON value at all, which made display and any time-based decision
+ * trivially forgeable. This does not authenticate it; it makes it well-formed
+ * and comparable across SDKs.
+ */
+export function requireCreationTime(raw, code: string) {
+  const value = raw?.createdAt;
+  if (typeof value !== 'string' || !CREATION_TIME_PATTERN.test(value)) {
+    throw new DataLockError(code, 'Creation Time must be an ISO-8601 UTC timestamp with millisecond precision');
+  }
+}
+
 export function validateEnvelopeFields(raw) {
   if (typeof raw?.recipientKeyId !== 'string' || raw.recipientKeyId.length === 0) {
     throw new DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, 'Data Envelope must contain recipientKeyId');
   }
+  requireCreationTime(raw, DataLockErrorCode.TAMPERED_ENVELOPE);
   fromB64(raw.ephemeralPublicKey, 'ephemeralPublicKey', DataLockErrorCode.TAMPERED_ENVELOPE, { maxLength: X25519_SPKI_MAX_BYTES });
   fromB64(raw.hkdfSalt, 'hkdfSalt', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 32 });
   fromB64(raw.nonce, 'nonce', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 12 });

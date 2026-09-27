@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
 import secrets
 import unicodedata
 from datetime import datetime, timezone
@@ -153,9 +154,30 @@ def validate_keyring_encrypted_read_key(encrypted: dict[str, Any]) -> None:
     from_b64(encrypted.get("ciphertext"), "encryptedReadKey.ciphertext", max_length=WRAPPED_READ_KEY_MAX_BYTES)
 
 
+CREATION_TIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+
+
+def require_creation_time(raw: dict[str, Any], *, error_code: DataLockErrorCode) -> None:
+    """Require Creation Time to be an ISO-8601 UTC millisecond string.
+
+    Creation Time is deliberately outside the AAD (ADR 0015), so anyone holding
+    a Data Envelope can rewrite it. Leaving the field unvalidated meant it could
+    be any JSON value at all, including a number or an object, which made
+    display and any time-based decision trivially forgeable. This does not make
+    the value authentic; it makes it well-formed and comparable across SDKs.
+    """
+    value = raw.get("createdAt")
+    if not isinstance(value, str) or not CREATION_TIME_PATTERN.match(value):
+        raise DataLockError(
+            error_code,
+            "Creation Time must be an ISO-8601 UTC timestamp with millisecond precision",
+        )
+
+
 def validate_envelope_fields(raw: dict[str, Any]) -> None:
     if not isinstance(raw.get("recipientKeyId"), str) or not raw["recipientKeyId"]:
         raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope must contain recipientKeyId")
+    require_creation_time(raw, error_code=DataLockErrorCode.TAMPERED_ENVELOPE)
     from_b64(
         raw.get("ephemeralPublicKey"),
         "ephemeralPublicKey",
@@ -340,7 +362,17 @@ def open_envelope_payload(
             "ephemeralPublicKey is not an X25519 public key",
         )
 
-    shared_secret = read_key.exchange(loaded_public)
+    try:
+        shared_secret = read_key.exchange(loaded_public)
+    except ValueError as exc:
+        # A low-order or otherwise invalid curve point makes X25519 refuse the
+        # exchange. Letting that escape as a bare ValueError would bypass the
+        # stable error-code contract in ADR 0021, so it is reported as a tampered
+        # envelope like any other unusable ephemeral key.
+        raise DataLockError(
+            DataLockErrorCode.TAMPERED_ENVELOPE,
+            "Invalid Data Envelope public key",
+        ) from exc
     content_key = HKDF(
         algorithm=hashes.SHA256(),
         length=KEY_LENGTH,

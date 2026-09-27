@@ -53,6 +53,12 @@ internal object CryptoCodec {
         if (value !is String) {
             throw DataLockException(code, "Missing or invalid base64 field: $field")
         }
+        // Java's decoder tolerates missing padding while Python and Node reject
+        // it, so two SDKs disagreed about whether the same document is valid.
+        // Require the canonical padded form.
+        if (!isCanonicalBase64(value)) {
+            throw DataLockException(code, "Missing or invalid base64 field: $field")
+        }
         if (exactLength != null && value.length > maxB64Chars(exactLength)) {
             throw DataLockException(code, "Invalid binary length for field: $field")
         }
@@ -76,6 +82,20 @@ internal object CryptoCodec {
     // Millisecond precision, matching Python and Node. ISO_INSTANT renders
     // nanoseconds when the clock offers them, which would make stable-JSON
     // signatures and text diffs disagree across languages.
+    private fun isCanonicalBase64(text: String): Boolean {
+        if (text.isEmpty() || text.length % 4 != 0) return false
+        var padding = 0
+        while (padding < 2 && text[text.length - 1 - padding] == '=') padding += 1
+        val dataEnd = text.length - padding
+        if (padding == 2 && text[dataEnd - 1] == '=') return false
+        for (i in 0 until dataEnd) {
+            val c = text[i]
+            val ok = c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '+' || c == '/'
+            if (!ok) return false
+        }
+        return true
+    }
+
     fun utcNow(): String =
         DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
 
@@ -146,10 +166,17 @@ internal object CryptoCodec {
     }
 
     private fun requireInt(raw: Map<String, Any?>, field: String, code: DataLockErrorCode): Int {
-        val number = raw[field] as? Number ?: throw DataLockException(code, "Invalid scrypt parameter: $field")
-        val doubleValue = number.toDouble()
-        val longValue = number.toLong()
-        if (doubleValue % 1.0 != 0.0 || longValue < Int.MIN_VALUE || longValue > Int.MAX_VALUE) {
+        // JSON allows 262144.0 for the same value, and this SDK used to accept it
+        // while Python rejected it because Python distinguishes int from float.
+        // The spec requires JSON integers, so a fractional form is refused here
+        // too rather than silently coerced.
+        val value = raw[field]
+        val longValue = when (value) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> throw DataLockException(code, "Invalid scrypt parameter: $field")
+        }
+        if (longValue < Int.MIN_VALUE || longValue > Int.MAX_VALUE) {
             throw DataLockException(code, "Invalid scrypt parameter: $field")
         }
         return longValue.toInt()
@@ -190,10 +217,28 @@ internal object CryptoCodec {
         fromB64(encrypted["ciphertext"], "encryptedReadKey.ciphertext", DataLockErrorCode.INVALID_KEYRING, maxLength = WRAPPED_READ_KEY_MAX_BYTES)
     }
 
+    private val creationTimePattern = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$ """.trim())
+
+    /**
+     * Require Creation Time to be an ISO-8601 UTC millisecond string.
+     *
+     * Creation Time is deliberately outside the AAD (ADR 0015), so anyone holding
+     * a Data Envelope can rewrite it. Leaving the field unvalidated meant it could
+     * be any JSON value at all. This does not authenticate it; it makes it
+     * well-formed and comparable across SDKs.
+     */
+    fun requireCreationTime(raw: Map<String, Any?>, code: DataLockErrorCode) {
+        val value = raw["createdAt"]
+        if (value !is String || !creationTimePattern.matches(value)) {
+            throw DataLockException(code, "Creation Time must be an ISO-8601 UTC timestamp with millisecond precision")
+        }
+    }
+
     fun validateEnvelopeFields(raw: Map<String, Any?>) {
         if ((raw["recipientKeyId"] as? String).isNullOrEmpty()) {
             throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope must contain recipientKeyId")
         }
+        requireCreationTime(raw, DataLockErrorCode.TAMPERED_ENVELOPE)
         fromB64(raw["ephemeralPublicKey"], "ephemeralPublicKey", DataLockErrorCode.TAMPERED_ENVELOPE, maxLength = X25519_SPKI_MAX_BYTES)
         fromB64(raw["hkdfSalt"], "hkdfSalt", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 32)
         fromB64(raw["nonce"], "nonce", DataLockErrorCode.TAMPERED_ENVELOPE, exactLength = 12)

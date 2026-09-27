@@ -6,6 +6,7 @@ import {
   decryptAesGcm,
   derivePasswordKey,
   fromB64,
+  requireCreationTime,
   requireEnvelopeAlg,
   validateEnvelopeFields,
   validateKeyringEncryptedReadKey,
@@ -32,6 +33,7 @@ export class Keyring {
     if (this.raw?.schema !== KEYRING_SCHEMA) {
       throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, `Unsupported Keyring schema: ${this.raw?.schema}`);
     }
+    requireCreationTime(this.raw, DataLockErrorCode.INVALID_KEYRING);
     validateKeyringEncryptedReadKey(this.raw.encryptedReadKey);
     validatePublicWriteKey(this.raw, DataLockErrorCode.INVALID_KEYRING);
   }
@@ -88,6 +90,7 @@ export class PublicKeyDocument {
     if ('encryptedReadKey' in this.raw) {
       throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document must not contain encrypted Read Key material');
     }
+    requireCreationTime(this.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT);
     validatePublicWriteKey(this.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT);
   }
   toJSON() {

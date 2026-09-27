@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { MAX_ENVELOPE_JSON_BYTES } from './constants.js';
 import { DataLockError, DataLockErrorCode } from './errors.js';
@@ -16,7 +16,10 @@ export function readJson(path, maxBytes = MAX_ENVELOPE_JSON_BYTES) {
 
 export function writeJson(path, value) {
   mkdirSync(dirname(resolve(path)), { recursive: true });
+  // writeFileSync only applies mode at creation, so an existing file with looser
+  // permissions would keep them. Converge explicitly.
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  if (process.platform !== 'win32') chmodSync(path, 0o600);
 }
 
 export function isStableJson(path, value) {

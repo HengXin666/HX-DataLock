@@ -101,6 +101,11 @@ class UserDataLock internal constructor(
 
     fun lockBytes(payloadBytes: ByteArray): DataEnvelope {
         requireOpenReadKey()
+        // Enforce the v1 limit here, not only in lockFile, so this SDK cannot
+        // emit a Full Data Envelope that every reader refuses to open.
+        if (payloadBytes.size > MAX_V1_FILE_BYTES) {
+            throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "V1 Full Data Envelopes support payloads up to 25 MB")
+        }
         keyring.verify()
         return DataEnvelope(CryptoCodec.lockBytesWithPublicKey(keyring.keyId, CryptoCodec.loadPublicWriteKey(keyring.raw, DataLockErrorCode.INVALID_KEYRING), payloadBytes))
     }

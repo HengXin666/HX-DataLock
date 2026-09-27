@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import x25519
 
 from .constants import ENVELOPE_SCHEMA, KEYRING_SCHEMA, MAX_PUBLIC_KEY_JSON_BYTES, PUBLIC_KEY_SCHEMA
 from .crypto_codec import (
+    require_creation_time,
     unwrap_read_key,
     validate_envelope_alg,
     validate_envelope_fields,
@@ -36,6 +37,7 @@ class Keyring:
                 DataLockErrorCode.UNSUPPORTED_SCHEMA,
                 f"Unsupported Keyring schema: {self.raw.get('schema')}",
             )
+        require_creation_time(self.raw, error_code=DataLockErrorCode.INVALID_KEYRING)
         if not isinstance(self.raw.get("encryptedReadKey"), dict):
             raise DataLockError(DataLockErrorCode.INVALID_KEYRING, "Keyring must contain encrypted Read Key")
         validate_keyring_encrypted_read_key(self.raw["encryptedReadKey"])
@@ -110,6 +112,7 @@ class PublicKeyDocument:
                 DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
                 "Public Key Document must not contain encrypted Read Key material",
             )
+        require_creation_time(self.raw, error_code=DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT)
         validate_public_write_key(
             self.raw,
             error_code=DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
