@@ -28,17 +28,22 @@ def write_json_document(path: str | Path, raw: dict[str, Any]) -> None:
     Path(path).write_text(dumps_stable_json(raw), encoding="utf-8")
 
 
-def write_private_json_document(path: str | Path, raw: dict[str, Any]) -> None:
+def write_private_bytes(path: str | Path, payload: bytes) -> None:
+    """Write owner-only bytes, converging the mode even if the file pre-exists."""
     document_path = Path(path)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     mode = stat.S_IRUSR | stat.S_IWUSR
     if os.name == "posix" and document_path.exists():
         document_path.chmod(mode)
     fd = os.open(document_path, flags, mode)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(dumps_stable_json(raw))
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(payload)
     if os.name == "posix":
         document_path.chmod(mode)
+
+
+def write_private_json_document(path: str | Path, raw: dict[str, Any]) -> None:
+    write_private_bytes(path, dumps_stable_json(raw).encode("utf-8"))
 
 
 def is_stable_json_document(path: str | Path, stable_json: str) -> bool:

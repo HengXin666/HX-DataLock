@@ -6,6 +6,28 @@ import { ENVELOPE_ALG, ENVELOPE_SCHEMA, KEY_LENGTH, MAX_V1_FILE_BYTES } from './
 import { DataEnvelope } from './documents.js';
 import { aadForEnvelope, b64, decryptAesGcm, encryptAesGcm, fromB64, utcNow } from './crypto-codec.js';
 
+/**
+ * Detect unpaired UTF-16 surrogates.
+ *
+ * Buffer.from(text, 'utf8') silently replaces them with U+FFFD, so the bytes
+ * that get encrypted are not the bytes the caller passed. Python raises
+ * INVALID_UTF8 in that case; without this check the two SDKs disagreed about
+ * whether the same input is lockable at all.
+ */
+function hasLoneSurrogate(text) {
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function lockBytesWithPublicKey(keyId, publicWriteKey, payloadBytes) {
   const ephemeral = generateKeyPairSync('x25519');
   const sharedSecret = diffieHellman({
@@ -48,6 +70,9 @@ export class SenderDataLock {
   lockText(text) {
     if (typeof text !== 'string') {
       throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'lockText requires text input');
+    }
+    if (hasLoneSurrogate(text)) {
+      throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'Text is not valid UTF-8');
     }
     return this.lockBytes(Buffer.from(text, 'utf8'));
   }
@@ -139,6 +164,9 @@ export class UserDataLock {
   lockText(text) {
     if (typeof text !== 'string') {
       throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'lockText requires text input');
+    }
+    if (hasLoneSurrogate(text)) {
+      throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'Text is not valid UTF-8');
     }
     return this.lockBytes(Buffer.from(text, 'utf8'));
   }

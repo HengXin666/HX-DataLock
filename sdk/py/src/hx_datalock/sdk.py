@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
@@ -29,12 +29,22 @@ from .crypto_codec import (
 from .datalocks import SenderDataLock, UserDataLock
 from .documents import DataEnvelope, Keyring, PublicKeyDocument
 from .errors import DataLockError, DataLockErrorCode
-from .json import is_stable_json_document, read_json_document
+from .json import is_stable_json_document, read_json_document, write_private_bytes
 from .password_strength import PasswordStrengthReport, check_password_strength
 
 
-def create_keyring(master_password: str, *, scrypt_n: int = DEFAULT_SCRYPT_N) -> Keyring:
-    check_password_strength(master_password)
+def create_keyring(
+    master_password: str,
+    *,
+    scrypt_n: int = DEFAULT_SCRYPT_N,
+    on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
+) -> Keyring:
+    # ADR 0012 and the v1 spec require the Password Strength Report to reach the
+    # user before the Keyring is created, so the report is handed to the caller
+    # instead of being discarded. Weak passwords remain allowed in v1.
+    report = check_password_strength(master_password)
+    if on_password_report is not None:
+        on_password_report(report)
     validate_scrypt_n(scrypt_n)
 
     private_key = x25519.X25519PrivateKey.generate()
@@ -72,8 +82,16 @@ def create_keyring(master_password: str, *, scrypt_n: int = DEFAULT_SCRYPT_N) ->
     return keyring
 
 
-def init_keyring(path: str | Path, master_password: str, *, scrypt_n: int = DEFAULT_SCRYPT_N) -> Keyring:
-    keyring = create_keyring(master_password, scrypt_n=scrypt_n)
+def init_keyring(
+    path: str | Path,
+    master_password: str,
+    *,
+    scrypt_n: int = DEFAULT_SCRYPT_N,
+    on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
+) -> Keyring:
+    keyring = create_keyring(
+        master_password, scrypt_n=scrypt_n, on_password_report=on_password_report
+    )
     keyring.write(path)
     return keyring
 
@@ -222,5 +240,5 @@ def open_file(
 ) -> bytes:
     keyring = load_keyring(keyring_path)
     plaintext = decrypt_message(keyring, master_password, DataEnvelope.read(envelope_path))
-    Path(output_path).write_bytes(plaintext)
+    write_private_bytes(output_path, plaintext)
     return plaintext

@@ -706,6 +706,80 @@ try {{
     subprocess.run(["node", str(script_path)], check=True)
 
 
+def test_both_sdks_agree_on_declared_algorithm_and_strict_utf8(tmp_path: Path) -> None:
+    """Cross-language agreement on two inputs that used to diverge.
+
+    The declared algorithm object must be exactly the v1 triple (Node previously
+    accepted extra fields while Python rejected them), and unpaired UTF-16
+    surrogates must fail instead of being silently replaced with U+FFFD.
+    """
+    script_path = tmp_path / "node-agreement.mjs"
+    script_path.write_text(
+        f"""
+import {{
+  DataLockErrorCode,
+  createKeyring,
+  exportPublicKeyDocument,
+  makeSenderDataLock,
+  makeUserDataLock,
+}} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
+import {{ DataEnvelope }} from {str((Path.cwd() / "sdk/node/dist/documents.js").as_uri())!r};
+
+const password = 'correct horse battery staple for hx datalock';
+const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const sender = makeSenderDataLock(exportPublicKeyDocument(keyring));
+const user = makeUserDataLock(keyring, {{ masterPassword: password }});
+const envelope = sender.lockBytes(Buffer.from('probe'));
+
+const extraAlgField = structuredClone(envelope.raw);
+extraAlgField.alg.extra = 'x';
+try {{
+  user.openBytes(new DataEnvelope(extraAlgField));
+  throw new Error('accepted an algorithm object with extra fields');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.UNSUPPORTED_ALGORITHM) throw error;
+}}
+
+const missingAlgField = structuredClone(envelope.raw);
+delete missingAlgField.alg.aead;
+try {{
+  new DataEnvelope(missingAlgField).verify();
+  throw new Error('accepted an incomplete algorithm object');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.UNSUPPORTED_ALGORITHM) throw error;
+}}
+
+try {{
+  sender.lockText('bad \\ud800 text');
+  throw new Error('accepted an unpaired surrogate');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.INVALID_UTF8) throw error;
+}}
+""",
+        encoding="utf-8",
+    )
+
+    subprocess.run(["node", str(script_path)], check=True)
+
+    # Python side of the same two contracts.
+    from hx_datalock import DataLockError, makeSenderDataLock, makeUserDataLock
+
+    keyring = init_keyring(tmp_path / "py-keyring.hxdl.json", PASSWORD, scrypt_n=16384)
+    py_sender = makeSenderDataLock(export_public_key_document(keyring))
+
+    with pytest.raises(DataLockError) as surrogate_exc:
+        py_sender.lockText("bad \ud800 text")
+    assert surrogate_exc.value.code == DataLockErrorCode.INVALID_UTF8
+
+    envelope = py_sender.lockBytes(b"probe")
+    tampered = dict(envelope.raw)
+    tampered["alg"] = dict(envelope.raw["alg"], extra="x")
+    py_user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
+    with pytest.raises(DataLockError) as alg_exc:
+        py_user.openBytes(DataEnvelope(tampered))
+    assert alg_exc.value.code == DataLockErrorCode.UNSUPPORTED_ALGORITHM
+
+
 def test_node_sdk_rejects_hardened_untrusted_inputs(tmp_path: Path) -> None:
     script_path = tmp_path / "node-hardening.mjs"
     script_path.write_text(

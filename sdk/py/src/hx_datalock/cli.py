@@ -41,11 +41,24 @@ def _read_password(password_env: str | None, *, confirm: bool = False) -> str:
     return password
 
 
+def _report_password_strength(report: dict) -> None:
+    """Surface the Password Strength Report before the Keyring is written.
+
+    ADR 0012: a weak Master Password warns but does not block Keyring creation.
+    """
+    print(f"Master Password strength: {report['level']}")
+    for warning in report.get("warnings", []):
+        print(f"  warning: {warning}")
+    for suggestion in report.get("suggestions", []):
+        print(f"  suggestion: {suggestion}")
+
+
 def _cmd_init(args: argparse.Namespace) -> None:
     keyring = init_keyring(
         args.keyring,
         _read_password(args.password_env, confirm=True),
         scrypt_n=args.scrypt_n,
+        on_password_report=_report_password_strength,
     )
     print(f"Keyring written: {args.keyring}")
     print(f"Write Key ID: {keyring.key_id}")

@@ -68,11 +68,20 @@ export function aadForEnvelope(keyId, alg = ENVELOPE_ALG) {
 }
 
 export function requireEnvelopeAlg(raw) {
-  if (
-    raw.alg?.kem !== ENVELOPE_ALG.kem ||
-    raw.alg?.kdf !== ENVELOPE_ALG.kdf ||
-    raw.alg?.aead !== ENVELOPE_ALG.aead
-  ) {
+  // The declared algorithm object must be exactly the v1 triple. Checking only
+  // the three known keys would let a document carry extra fields and still be
+  // accepted here, while the AAD is built from whatever object was supplied:
+  // that diverged from the Python SDK, which compares the whole object.
+  const declared = raw?.alg;
+  const matches =
+    declared !== null &&
+    typeof declared === 'object' &&
+    !Array.isArray(declared) &&
+    Object.keys(declared).length === 3 &&
+    declared.kem === ENVELOPE_ALG.kem &&
+    declared.kdf === ENVELOPE_ALG.kdf &&
+    declared.aead === ENVELOPE_ALG.aead;
+  if (!matches) {
     throw new DataLockError(
       DataLockErrorCode.UNSUPPORTED_ALGORITHM,
       'Data Envelope must use X25519, HKDF-SHA256, and AES-256-GCM',

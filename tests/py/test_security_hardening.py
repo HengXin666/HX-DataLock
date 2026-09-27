@@ -13,6 +13,7 @@ from hx_datalock import (
     Keyring,
     create_keyring,
     export_public_key_document,
+    init_keyring,
     makeSenderDataLock,
     send_file,
     send_file_with_public_doc,
@@ -94,6 +95,50 @@ def test_keyring_verify_rejects_oversized_scrypt_n():
     with pytest.raises(DataLockError) as exc_info:
         Keyring(raw).verify()
     assert exc_info.value.code == DataLockErrorCode.INVALID_KEYRING
+
+
+def test_password_strength_report_reaches_the_caller(tmp_path):
+    """ADR 0012 requires the report before Keyring creation, so it must not be discarded."""
+    seen = []
+    create_keyring("password", scrypt_n=16384, on_password_report=seen.append)
+
+    assert len(seen) == 1
+    assert seen[0]["allowed"] is True
+    assert seen[0]["level"] == "weak"
+    assert seen[0]["warnings"]
+
+    # A weak password still creates a Keyring in v1; the report only informs.
+    assert load_keyring_path_roundtrip(tmp_path, "password") is not None
+
+
+def load_keyring_path_roundtrip(tmp_path, password):
+    from hx_datalock import load_keyring
+
+    path = tmp_path / "roundtrip.hxdl.json"
+    init_keyring(path, password, scrypt_n=16384)
+    return load_keyring(path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file mode assertions require a POSIX platform")
+def test_decrypted_plaintext_is_written_owner_only(tmp_path):
+    """A decrypted payload is as sensitive as the Keyring and must not follow umask."""
+    from hx_datalock import encrypt_message, init_keyring, load_keyring, open_file
+
+    password = "correct horse battery staple 2026 HX-DataLock hardening"
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    envelope_path = tmp_path / "message.hxdl.json"
+    output_path = tmp_path / "opened.bin"
+
+    init_keyring(keyring_path, password, scrypt_n=16384)
+    encrypt_message(load_keyring(keyring_path), b"secret").write(envelope_path)
+    open_file(keyring_path, envelope_path, output_path, password)
+
+    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+
+    # Pre-existing permissive files converge too, matching Keyring write behaviour.
+    output_path.chmod(0o644)
+    open_file(keyring_path, envelope_path, output_path, password)
+    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
 
 
 def test_envelope_verify_rejects_oversized_ciphertext_without_decode():

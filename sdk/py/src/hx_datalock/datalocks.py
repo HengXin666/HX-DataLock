@@ -9,6 +9,7 @@ from .constants import MAX_V1_FILE_BYTES
 from .crypto_codec import lock_bytes_with_public_key_raw, open_envelope_payload
 from .documents import DataEnvelope, Keyring, PublicKeyDocument
 from .errors import DataLockError, DataLockErrorCode
+from .json import write_private_bytes
 
 
 @dataclass(frozen=True)
@@ -91,7 +92,9 @@ class UserDataLock:
                 DataLockErrorCode.OVERSIZED_FILE,
                 "V1 Full Data Envelopes support local files up to 25 MB",
             )
-        Path(output_path).write_bytes(plaintext)
+        # Decrypted payloads are as sensitive as the Keyring, so they must not
+        # inherit a permissive umask the way a plain write_bytes would.
+        write_private_bytes(output_path, plaintext)
         return plaintext
 
     def lockBytes(self, payload_bytes: bytes) -> DataEnvelope:
