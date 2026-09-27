@@ -1,0 +1,122 @@
+name: Keyring Offline Crack Audit
+
+# 离线爆破审计: 量化 "Keyring 泄漏 + 弱/中口令" 的真实破解成本。
+# 动机 = ADR 0001 / 0019: 安全完全押在 Master Password 抗离线猜测上, 且不做锁定。
+# 跑在 GitHub runner 上, 不占用本地机器。
+
+on:
+  workflow_dispatch:
+    inputs:
+      kdf_n:
+        description: "scrypt N (必须与字典排名换算一致)"
+        required: true
+        default: "16384"
+      rules:
+        description: "启用常见 mangling 规则 (cap/leet/后缀/年份)"
+        required: true
+        default: "1"
+      limit:
+        description: "候选上限 (0 = 全量)"
+        required: true
+        default: "0"
+      jobs:
+        description: "并行 shard 数"
+        required: true
+        default: "28"
+
+jobs:
+  gen-targets:
+    name: 生成审计目标 (已知明文口令的 Keyring)
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: 生成 targets
+        run: |
+          uv sync --dev
+          uv run python .scratch/crack-audit/gen_targets_ci.py --n ${{ inputs.kdf_n }}
+      - name: 下载真实泄露口令表
+        run: |
+          mkdir -p dict
+          curl -sSL -o dict/top10k.txt \
+            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt
+          curl -sSL -o dict/top100k.txt \
+            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/xato-net-10-million-passwords-100000.txt
+          curl -sSL -o dict/wifi.txt \
+            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/WiFi-WPA/probable-v2-wpa-top4800.txt
+          wc -l dict/*
+      - name: 打包 targets + dict
+        run: tar czf audit-input.tgz .scratch/crack-audit/targets_ci dict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-input
+          path: audit-input.tgz
+          retention-days: 1
+      - id: m
+        name: 构造 shard matrix
+        run: |
+          python3 -c "
+          import json
+          n=${{ inputs.jobs }}
+          print('matrix=' + json.dumps({'shard': list(range(n))}))" >> $GITHUB_OUTPUT
+
+  crack:
+    name: 爆破 shard ${{ matrix.shard }}
+    needs: gen-targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 28
+      matrix: ${{ fromJson(needs.gen-targets.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: audit-input
+      - name: 解包
+        run: tar xzf audit-input.tgz
+      - name: 跑 shard ${{ matrix.shard }}
+        run: |
+          node .scratch/crack-audit/crack-node.mjs \
+            dict=dict/top10k.txt \
+            targets=.scratch/crack-audit/targets_ci/index.json \
+            shard=${{ matrix.shard }} shards=${{ inputs.jobs }} \
+            rules=${{ inputs.rules }} limit=${{ inputs.limit }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.json
+          retention-days: 3
+
+  report:
+    name: 汇总
+    needs: crack
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          merge-multiple: true
+      - name: 汇总各 shard
+        run: |
+          python3 - <<'PY'
+          import json, glob, collections
+          rows, meta = [], {}
+          for f in sorted(glob.glob('shard-*.json')):
+              d = json.load(open(f))
+              meta = {'scrypt_N': d.get('scrypt_N'), 'rules': d.get('rules'),
+                      'candidates_total': d.get('candidates_total'),
+                      'ms_per_guess': d.get('ms_per_guess')}
+              for case, v in (d.get('found') or {}).items():
+                  rows.append((case, v))
+          rows.sort(key=lambda r: r[1]['global_index'])
+          print(json.dumps(meta, ensure_ascii=False))
+          print(f"{'case':10s} {'rank':>8s} {'口令':20s}")
+          for case, v in rows:
+              print(f"{case:10s} {v['global_index']:>8d} {v['password']:20s}")
+          print(f"\n共命中 {len(rows)} 个目标")
+          PY

@@ -8,3 +8,13 @@ __pycache__/
 node_modules/
 sdk/node/dist/
 sdk/node/*.tgz
+
+# 爆破审计的中间产物与目标 keyring (含已知明文口令, 永不入库)
+.scratch/crack-audit/targets/
+.scratch/crack-audit/targets_fast/
+.scratch/crack-audit/targets_ci/
+.scratch/crack-audit/*.log
+.scratch/crack-audit/result_*.json
+shard-*.json
+sdk/kotlin/.gradle/
+sdk/kotlin/build/
