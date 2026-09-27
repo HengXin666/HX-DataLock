@@ -1,0 +1,59 @@
+name: "Crack Audit Deep"
+on:
+  workflow_dispatch:
+jobs:
+  deep:
+    name: "深字典 top100k shard ${{ matrix.shard }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 26
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: |
+          uv sync --dev
+          uv run python .scratch/crack-audit/gen_targets_ci.py --n 16384 --set primary
+      - run: |
+          mkdir -p dict
+          curl -sSL -o dict/top100k.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/xato-net-10-million-passwords-100000.txt
+          wc -l dict/top100k.txt
+      - run: |
+          node .scratch/crack-audit/crack-node.mjs \
+            dict=dict/top100k.txt \
+            targets=.scratch/crack-audit/targets_ci/index.json \
+            shard=${{ matrix.shard }} shards=26 rules=0 limit=100000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deep-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.json
+          retention-days: 3
+  report:
+    name: "深字典汇总"
+    needs: deep
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { pattern: "deep-*", merge-multiple: true, path: deep }
+      - run: |
+          python3 - <<'PY'
+          import json, glob
+          hits, meta = {}, {}
+          for f in glob.glob('deep/shard-*.json'):
+              d = json.load(open(f))
+              meta = {'scrypt_N': d.get('scrypt_N'), 'candidates_total': d.get('candidates_total')}
+              for c, v in (d.get('found') or {}).items():
+                  if c not in hits or v['global_index'] < hits[c]['global_index']:
+                      hits[c] = v
+          print("params:", json.dumps(meta, ensure_ascii=False))
+          print('%-10s %10s %s' % ('case','rank','pw'))
+          for c, v in sorted(hits.items(), key=lambda kv: kv[1]['global_index']):
+              print('%-10s %10d %s' % (c, v['global_index'], v['password']))
+          print(f"hits {len(hits)}")
+          PY
