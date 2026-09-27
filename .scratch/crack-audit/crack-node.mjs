@@ -28,10 +28,16 @@ const TOPN = asInt('topn', 20000);
 
 function nfc(s) { return s.normalize('NFC'); }
 
-function check(pw, enc, keyId) {
-  const kdf = enc.kdf;
-  const key = scryptSync(Buffer.from(nfc(pw), 'utf8'), Buffer.from(kdf.salt, 'base64'),
-    kdf.keyLength, { N: kdf.N, r: kdf.r, p: kdf.p, maxmem: Math.max(512 * 1024 * 1024, 256 * kdf.N * kdf.r) });
+// All targets share one Keyring layout, so the KDF parameters are identical and
+// only the salt differs. Deriving per candidate and reusing the key across
+// targets is what keeps the sweep linear in candidates.
+function deriveKey(pw, kdf) {
+  return scryptSync(Buffer.from(nfc(pw), 'utf8'), Buffer.from(kdf.salt, 'base64'),
+    kdf.keyLength, { N: kdf.N, r: kdf.r, p: kdf.p,
+                     maxmem: Math.max(512 * 1024 * 1024, 256 * kdf.N * kdf.r) });
+}
+
+function decryptWith(key, enc, keyId) {
   try {
     const d = createDecipheriv('aes-256-gcm', key, Buffer.from(enc.aead.nonce, 'base64'));
     d.setAAD(Buffer.from('hxdl.keyring.v1:' + keyId + ':scrypt:AES-256-GCM', 'utf8'));
@@ -39,6 +45,10 @@ function check(pw, enc, keyId) {
     Buffer.concat([d.update(Buffer.from(enc.ciphertext, 'base64')), d.final()]);
     return true;
   } catch { return false; }
+}
+
+function check(pw, enc, keyId) {
+  return decryptWith(deriveKey(pw, enc.kdf), enc, keyId);
 }
 
 const SUFFIX = ['1','12','123','1234','12345','!','!!','@','#','.','_','2023','2024','2025','2026','1990','1966','888','520','1314'];
@@ -84,6 +94,10 @@ console.log(JSON.stringify({ event: 'throughput', ms_per_guess: +perGuessMs.toFi
   guesses_per_sec_1core: +(1000 / perGuessMs).toFixed(3),
   shard_eta_sec: Math.round(mine.length * perGuessMs / 1000) }));
 
+// Every Keyring carries its own random salt, so one password yields a different
+// scrypt output per target and the derivation cannot be shared between them.
+// The sweep is therefore target-major, and the cost is bounded by shrinking the
+// target set and the candidate list rather than by reordering the loops.
 const found = {};
 const t0 = Date.now();
 for (let i = 0; i < mine.length; i += 1) {
@@ -98,7 +112,10 @@ for (let i = 0; i < mine.length; i += 1) {
     }
   }
   if (Object.keys(found).length === targets.length) break;
-  if (i % 2000 === 0 && i > 0) console.log(JSON.stringify({ event: 'progress', shard: SHARD, i, of: mine.length }));
+  if (i % 20000 === 0 && i > 0) {
+    console.log(JSON.stringify({ event: 'progress', shard: SHARD, i, of: mine.length,
+      elapsed_sec: +((Date.now() - t0) / 1000).toFixed(1) }));
+  }
 }
 
 console.log(JSON.stringify({ event: 'shard-done', shard: SHARD, found,

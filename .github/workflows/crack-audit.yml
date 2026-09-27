@@ -1,122 +1,172 @@
 name: Keyring Offline Crack Audit
 
-# 离线爆破审计: 量化 "Keyring 泄漏 + 弱/中口令" 的真实破解成本。
-# 动机 = ADR 0001 / 0019: 安全完全押在 Master Password 抗离线猜测上, 且不做锁定。
-# 跑在 GitHub runner 上, 不占用本地机器。
+# 离线爆破审计 —— 量化 "Keyring 泄漏 + 弱/中口令" 的真实破解成本。
+#
+# 动机 = ADR 0001 / 0019: 安全性完全押在 Master Password 抗离线猜测上, 且明确
+# 不做锁定。这个前提此前没有任何测量, 这里补上。
+#
+# 成本模型 (它决定了参数怎么选, 别乱改):
+#   每个 Keyring 自带随机 salt, 所以同一口令对每个目标必须各做一次 scrypt。
+#   单次扫描成本 = 候选数 x 目标数 x 单次派生耗时。
+#   实测 Node @N=2^14 单次约 29ms, @N=2^18 约 579ms。
+#   三个因子任一放大就会超出 runner 预算, 必须显式限住。
+#
+# 两个实验回答两个不同问题:
+#   pure-dict  : 最弱档口令是否在"纯泄露字典"下就失守, 以及在字典里的排名。
+#   rules-mid  : 加上常见 mangling 之后, 中等档口令能撑多久。
+#   costcheck  : 在默认参数下测一次派生, 用于把排名换算成真实时间。
 
 on:
   workflow_dispatch:
-    inputs:
-      kdf_n:
-        description: "scrypt N (必须与字典排名换算一致)"
-        required: true
-        default: "16384"
-      rules:
-        description: "启用常见 mangling 规则 (cap/leet/后缀/年份)"
-        required: true
-        default: "1"
-      limit:
-        description: "候选上限 (0 = 全量)"
-        required: true
-        default: "0"
-      jobs:
-        description: "并行 shard 数"
-        required: true
-        default: "28"
 
 jobs:
-  gen-targets:
-    name: 生成审计目标 (已知明文口令的 Keyring)
+  pure-dict:
+    name: 纯字典 (top10k, 无规则) shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.m.outputs.matrix }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 26
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: 生成 targets
-        run: |
+      - run: |
           uv sync --dev
-          uv run python .scratch/crack-audit/gen_targets_ci.py --n ${{ inputs.kdf_n }}
-      - name: 下载真实泄露口令表
-        run: |
+          uv run python .scratch/crack-audit/gen_targets_ci.py --n 16384 --set primary
+      - run: |
           mkdir -p dict
           curl -sSL -o dict/top10k.txt \
             https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt
-          curl -sSL -o dict/top100k.txt \
-            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/xato-net-10-million-passwords-100000.txt
-          curl -sSL -o dict/wifi.txt \
-            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/WiFi-WPA/probable-v2-wpa-top4800.txt
-          wc -l dict/*
-      - name: 打包 targets + dict
-        run: tar czf audit-input.tgz .scratch/crack-audit/targets_ci dict
-      - uses: actions/upload-artifact@v4
-        with:
-          name: audit-input
-          path: audit-input.tgz
-          retention-days: 1
-      - id: m
-        name: 构造 shard matrix
-        run: |
-          python3 -c "
-          import json
-          n=${{ inputs.jobs }}
-          print('matrix=' + json.dumps({'shard': list(range(n))}))" >> $GITHUB_OUTPUT
-
-  crack:
-    name: 爆破 shard ${{ matrix.shard }}
-    needs: gen-targets
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 28
-      matrix: ${{ fromJson(needs.gen-targets.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: audit-input
-      - name: 解包
-        run: tar xzf audit-input.tgz
-      - name: 跑 shard ${{ matrix.shard }}
+      - name: "扫描: 约 500 候选每 shard, 8 目标, 单次约 29ms"
         run: |
           node .scratch/crack-audit/crack-node.mjs \
             dict=dict/top10k.txt \
             targets=.scratch/crack-audit/targets_ci/index.json \
-            shard=${{ matrix.shard }} shards=${{ inputs.jobs }} \
-            rules=${{ inputs.rules }} limit=${{ inputs.limit }}
+            shard=${{ matrix.shard }} shards=26 rules=0 limit=10000
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shard-${{ matrix.shard }}
+          name: pure-${{ matrix.shard }}
           path: shard-${{ matrix.shard }}.json
           retention-days: 3
 
+  rules-mid:
+    name: 字典+变形 (打中等档) shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 26
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: |
+          uv sync --dev
+          uv run python .scratch/crack-audit/gen_targets_ci.py --n 16384 --set mid
+      - run: |
+          mkdir -p dict
+          curl -sSL -o dict/top10k.txt \
+            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt
+      - name: "扫描: top2000 词加变形, 每 shard 约 5000 候选, 3 目标"
+        run: |
+          node .scratch/crack-audit/crack-node.mjs \
+            dict=dict/top10k.txt \
+            targets=.scratch/crack-audit/targets_ci/index.json \
+            shard=${{ matrix.shard }} shards=26 rules=1 limit=2000 topn=2000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rules-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.json
+          retention-days: 3
+
+  costcheck:
+    name: 默认参数成本校验 (N=2^18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: |
+          uv sync --dev
+          uv run python .scratch/crack-audit/gen_targets_ci.py --n 262144 --set costcheck
+      - run: |
+          mkdir -p dict
+          curl -sSL -o dict/top10k.txt \
+            https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt
+      - name: "线性抽样: 20 候选 x 3 目标, 实测单次派生"
+        run: |
+          node .scratch/crack-audit/crack-node.mjs \
+            dict=dict/top10k.txt \
+            targets=.scratch/crack-audit/targets_ci/index.json \
+            shard=0 shards=1 rules=0 limit=20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: costcheck
+          path: shard-0.json
+
   report:
     name: 汇总
-    needs: crack
+    needs: [pure-dict, rules-mid, costcheck]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with:
-          pattern: shard-*
-          merge-multiple: true
-      - name: 汇总各 shard
+        continue-on-error: true
+        with: { pattern: 'pure-*', merge-multiple: true, path: pure }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { pattern: 'rules-*', merge-multiple: true, path: rules }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: costcheck, path: costcheck }
+      - name: 汇总
         run: |
           python3 - <<'PY'
-          import json, glob, collections
-          rows, meta = [], {}
-          for f in sorted(glob.glob('shard-*.json')):
-              d = json.load(open(f))
-              meta = {'scrypt_N': d.get('scrypt_N'), 'rules': d.get('rules'),
-                      'candidates_total': d.get('candidates_total'),
-                      'ms_per_guess': d.get('ms_per_guess')}
-              for case, v in (d.get('found') or {}).items():
-                  rows.append((case, v))
-          rows.sort(key=lambda r: r[1]['global_index'])
-          print(json.dumps(meta, ensure_ascii=False))
-          print(f"{'case':10s} {'rank':>8s} {'口令':20s}")
-          for case, v in rows:
-              print(f"{case:10s} {v['global_index']:>8d} {v['password']:20s}")
-          print(f"\n共命中 {len(rows)} 个目标")
+          import json, glob
+
+          def collect(pat, label):
+              hits, meta = {}, {}
+              for f in glob.glob(pat):
+                  d = json.load(open(f))
+                  meta = {'scrypt_N': d.get('scrypt_N'), 'rules': d.get('rules'),
+                          'candidates_total': d.get('candidates_total'),
+                          'ms_per_guess': d.get('ms_per_guess')}
+                  for case, v in (d.get('found') or {}).items():
+                      if case not in hits or v['global_index'] < hits[case]['global_index']:
+                          hits[case] = v
+              print(f"\n===== {label} =====")
+              print("扫描参数:", json.dumps(meta, ensure_ascii=False))
+              if not hits:
+                  print("无命中")
+                  return meta, hits
+              print('%-10s %10s %s' % ('case', 'rank', '口令'))
+              for case, v in sorted(hits.items(), key=lambda kv: kv[1]['global_index']):
+                  print('%-10s %10d %s' % (case, v['global_index'], v['password']))
+              print(f"命中 {len(hits)} 个")
+              return meta, hits
+
+          meta_pure, hits_pure = collect('pure/shard-*.json', '纯字典 top10k')
+          meta_rules, hits_rules = collect('rules/shard-*.json', '字典+变形 (打中等档)')
+
+          cost = {}
+          for f in glob.glob('costcheck/shard-*.json'):
+              cost = json.load(open(f))
+          if cost:
+              print("\n===== 默认参数 (N=2^18) 单次派生实测 =====")
+              print(json.dumps({k: cost.get(k) for k in
+                    ('scrypt_N', 'ms_per_guess', 'guesses_per_sec_1core')}, ensure_ascii=False))
+              ms = cost.get('ms_per_guess')
+              if ms:
+                  print("\n换算: 排名 k 的口令在默认参数下 = k x 2.04(1核) 或 k x ~19(本机32核) 次派生")
+                  for label, hits in (('纯字典', hits_pure), ('字典+变形', hits_rules)):
+                      for case, v in sorted(hits.items(), key=lambda kv: kv[1]['global_index']):
+                          r = v['global_index']
+                          print(f"  {label:8s} {case:10s} rank={r:<7d} "
+                                f"单核 {r*ms/1000:.1f}s | 32核 {r*ms/1000/19.3:.2f}s")
           PY
