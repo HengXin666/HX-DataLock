@@ -25,7 +25,11 @@ import { isStableJson } from './json.js';
 import { checkPasswordStrength } from './password-strength.js';
 
 export function createKeyring(masterPassword, options: any = {}) {
-  checkPasswordStrength(masterPassword);
+  // ADR 0023 makes this a cross-language contract: the report must reach the
+  // caller rather than being discarded.
+  const report = checkPasswordStrength(masterPassword);
+  const onReport = options.onPasswordReport ?? options.on_password_report;
+  if (typeof onReport === 'function') onReport(report);
   const scryptN = Number(options.scryptN || options.scrypt_n || DEFAULT_SCRYPT_N);
   validateScryptN(scryptN);
   const { publicKey, privateKey } = generateKeyPairSync('x25519');
@@ -65,6 +69,14 @@ export function createKeyring(masterPassword, options: any = {}) {
 }
 
 export const create_keyring = createKeyring;
+
+export function initKeyring(path, masterPassword, options: any = {}) {
+  const keyring = createKeyring(masterPassword, options);
+  keyring.write(path);
+  return keyring;
+}
+
+export const init_keyring = initKeyring;
 
 export function loadKeyring(path) {
   const keyring = new Keyring(readJson(path, MAX_KEYRING_JSON_BYTES));

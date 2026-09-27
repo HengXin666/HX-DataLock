@@ -1,5 +1,5 @@
 import { createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DataLockError, DataLockErrorCode } from './errors.js';
 import { ENVELOPE_ALG, ENVELOPE_SCHEMA, KEY_LENGTH, MAX_V1_FILE_BYTES } from './constants.js';
@@ -26,6 +26,14 @@ function hasLoneSurrogate(text) {
     }
   }
   return false;
+}
+
+function readWithinV1Limit(inputPath) {
+  // Check before reading so an oversized file is never pulled into memory.
+  if (statSync(inputPath).size > MAX_V1_FILE_BYTES) {
+    throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support local files up to 25 MB');
+  }
+  return readFileSync(inputPath);
 }
 
 function lockBytesWithPublicKey(keyId, publicWriteKey, payloadBytes) {
@@ -64,6 +72,12 @@ export class SenderDataLock {
   }
   lockBytes(payloadBytes) {
     const bytes = Buffer.isBuffer(payloadBytes) ? payloadBytes : Buffer.from(payloadBytes);
+    // Enforce the v1 limit here, not only in lockFile. Without it lockBytes can
+    // produce a Full Data Envelope that every SDK then refuses to open, so the
+    // SDK would emit documents it cannot read back.
+    if (bytes.length > MAX_V1_FILE_BYTES) {
+      throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support payloads up to 25 MB');
+    }
     this.publicKeyDocument.verify();
     return lockBytesWithPublicKey(this.publicKeyDocument.keyId, this.publicKeyDocument.publicWriteKey, bytes);
   }
@@ -77,10 +91,7 @@ export class SenderDataLock {
     return this.lockBytes(Buffer.from(text, 'utf8'));
   }
   lockFile(inputPath, outputPath) {
-    if (statSync(inputPath).size > MAX_V1_FILE_BYTES) {
-      throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support local files up to 25 MB');
-    }
-    const envelope = this.lockBytes(readFileSync(inputPath));
+    const envelope = this.lockBytes(readWithinV1Limit(inputPath));
     envelope.write(outputPath);
     return envelope;
   }
@@ -152,12 +163,19 @@ export class UserDataLock {
       throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support local files up to 25 MB');
     }
     mkdirSync(dirname(resolve(outputPath)), { recursive: true });
+    // writeFileSync only applies mode when creating, so an existing file with
+    // looser permissions would silently stay readable. Converge like the
+    // Keyring writer does.
     writeFileSync(outputPath, plaintext, { mode: 0o600 });
+    if (process.platform !== 'win32') chmodSync(outputPath, 0o600);
     return plaintext;
   }
   lockBytes(payloadBytes) {
     this.requireOpenReadKey();
     const bytes = Buffer.isBuffer(payloadBytes) ? payloadBytes : Buffer.from(payloadBytes);
+    if (bytes.length > MAX_V1_FILE_BYTES) {
+      throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support payloads up to 25 MB');
+    }
     this.keyring.verify();
     return lockBytesWithPublicKey(this.keyring.keyId, this.keyring.publicWriteKey, bytes);
   }
@@ -171,10 +189,7 @@ export class UserDataLock {
     return this.lockBytes(Buffer.from(text, 'utf8'));
   }
   lockFile(inputPath, outputPath) {
-    if (statSync(inputPath).size > MAX_V1_FILE_BYTES) {
-      throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support local files up to 25 MB');
-    }
-    const envelope = this.lockBytes(readFileSync(inputPath));
+    const envelope = this.lockBytes(readWithinV1Limit(inputPath));
     envelope.write(outputPath);
     return envelope;
   }

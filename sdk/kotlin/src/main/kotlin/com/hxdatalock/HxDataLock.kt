@@ -93,7 +93,9 @@ class UserDataLock internal constructor(
         if (plaintext.size > MAX_V1_FILE_BYTES) {
             throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "V1 Full Data Envelopes support local files up to 25 MB")
         }
-        Files.write(outputPath, plaintext)
+        // A decrypted payload is as sensitive as the Keyring, so it must not
+        // follow a permissive umask.
+        writePrivateJsonDocumentBytes(outputPath, plaintext)
         return plaintext
     }
 

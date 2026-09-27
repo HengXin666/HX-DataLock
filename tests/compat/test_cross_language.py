@@ -8,15 +8,19 @@ import pytest
 
 from hx_datalock import (
     DataEnvelope,
+    DataLockError,
     DataLockErrorCode,
     decrypt_message,
     encrypt_message,
     export_public_key_document,
     init_keyring,
     load_keyring,
+    makeSenderDataLock,
     open_file,
     send_file,
+    send_file_with_public_doc,
 )
+from hx_datalock.constants import MAX_V1_FILE_BYTES
 
 PASSWORD = "correct horse battery staple for hx datalock"
 
@@ -829,6 +833,76 @@ try {{
     )
 
     subprocess.run(["node", str(script_path)], check=True)
+
+
+def test_node_round_trips_large_payloads_within_the_v1_limit(tmp_path: Path) -> None:
+    """The v1 contract is 25 MB files, and Node used to fail above ~3.2 MB.
+
+    Node's base64 validation regex was anchored and nested, so V8 threw
+    RangeError: Maximum call stack size exceeded once the subject grew past about
+    4.47M characters. Because that happened inside fromB64, which wraps decoding
+    in a catch, the RangeError also bypassed the stable error-code contract
+    entirely instead of surfacing as OVERSIZED_FILE. Only 1 MB was ever covered,
+    so the failure sat exactly between the tested size and the documented limit.
+    """
+    script_path = tmp_path / "node-large-payload.mjs"
+    script_path.write_text(
+        f"""
+import {{
+  createKeyring,
+  exportPublicKeyDocument,
+  makeSenderDataLock,
+  makeUserDataLock,
+}} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
+
+const password = 'correct horse battery staple for hx datalock';
+const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const sender = makeSenderDataLock(exportPublicKeyDocument(keyring));
+const user = makeUserDataLock(keyring, {{ masterPassword: password }});
+
+for (const mb of [1, 4, 10, 25]) {{
+  const size = mb * 1024 * 1024;
+  const envelope = sender.lockBytes(Buffer.alloc(size, 0x41));
+  const opened = user.openBytes(envelope);
+  if (opened.length !== size) {{
+    throw new Error(`round trip size mismatch at ${{mb}} MB`);
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+
+    subprocess.run(["node", str(script_path)], check=True)
+
+
+def test_lock_bytes_rejects_payloads_over_the_v1_limit(tmp_path: Path) -> None:
+    """lockBytes must not produce an envelope that no SDK can open.
+
+    Without the limit, lockBytes(25MB + 1) succeeded and wrote a Full Data
+    Envelope that every reader then rejected, so the SDK emitted documents it
+    could not read back.
+    """
+    over_limit = MAX_V1_FILE_BYTES + 1
+    keyring = init_keyring(tmp_path / "limit-keyring.hxdl.json", PASSWORD, scrypt_n=16384)
+    sender = makeSenderDataLock(export_public_key_document(keyring))
+
+    with pytest.raises(DataLockError) as sender_exc:
+        sender.lockBytes(b"A" * over_limit)
+    assert sender_exc.value.code == DataLockErrorCode.OVERSIZED_FILE
+
+    oversized_file = tmp_path / "oversized.bin"
+    oversized_file.write_bytes(b"A" * over_limit)
+    with pytest.raises(DataLockError) as helper_exc:
+        send_file_with_public_doc(
+            _write_public_document(tmp_path, keyring), oversized_file, tmp_path / "out.json"
+        )
+    assert helper_exc.value.code == DataLockErrorCode.OVERSIZED_FILE
+
+
+def _write_public_document(tmp_path, keyring):
+    public_path = tmp_path / "limit-public.hxdl.json"
+    export_public_key_document(keyring).write(public_path)
+    return public_path
 
 
 def test_simple_python_api_round_trips_file(tmp_path: Path) -> None:

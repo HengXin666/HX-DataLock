@@ -19,6 +19,13 @@ class SenderDataLock:
     def lockBytes(self, payload_bytes: bytes) -> DataEnvelope:
         if not isinstance(payload_bytes, bytes):
             raise TypeError("payload_bytes must be bytes")
+        # Enforce the v1 limit here, not only in lockFile: otherwise lockBytes can
+        # produce a Full Data Envelope that every SDK then refuses to open.
+        if len(payload_bytes) > MAX_V1_FILE_BYTES:
+            raise DataLockError(
+                DataLockErrorCode.OVERSIZED_FILE,
+                "V1 Full Data Envelopes support payloads up to 25 MB",
+            )
         self.public_key_document.verify()
         return DataEnvelope(
             lock_bytes_with_public_key_raw(
@@ -101,6 +108,11 @@ class UserDataLock:
         self._require_open_read_key()
         if not isinstance(payload_bytes, bytes):
             raise TypeError("payload_bytes must be bytes")
+        if len(payload_bytes) > MAX_V1_FILE_BYTES:
+            raise DataLockError(
+                DataLockErrorCode.OVERSIZED_FILE,
+                "V1 Full Data Envelopes support payloads up to 25 MB",
+            )
         self.keyring.verify()
         return DataEnvelope(
             lock_bytes_with_public_key_raw(

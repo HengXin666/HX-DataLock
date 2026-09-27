@@ -118,3 +118,14 @@ data class PublicKeyDocument(val raw: LinkedHashMap<String, Any?>) {
 
 internal fun Map<String, Any?>.mapField(field: String, code: DataLockErrorCode): Map<String, Any?> =
     this[field] as? Map<String, Any?> ?: throw DataLockException(code, "Missing or invalid object field: $field")
+
+/** Write decrypted bytes with owner-only permissions where the platform supports it. */
+internal fun writePrivateJsonDocumentBytes(path: Path, payload: ByteArray) {
+    val permissions = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+    if ("posix" in path.fileSystem.supportedFileAttributeViews()) {
+        Files.write(path, payload)
+        Files.setPosixFilePermissions(path, permissions)
+    } else {
+        Files.write(path, payload)
+    }
+}

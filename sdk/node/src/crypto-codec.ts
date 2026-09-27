@@ -31,8 +31,35 @@ function maxB64Chars(maxBytes: number) {
   return Math.ceil(maxBytes / 3) * 4;
 }
 
+/**
+ * Validate standard base64 without a backtracking regular expression.
+ *
+ * The previous pattern was anchored and nested, so V8 rejected it on
+ * `RangeError: Maximum call stack size exceeded` once the subject reached about
+ * 4.47M characters. A 25 MB payload encodes to roughly 33 MB of base64, so every
+ * v1 file helper above ~3.2 MB threw inside the regex instead of round-tripping.
+ * A linear scan has no such ceiling and matches the same language.
+ */
+function isStandardBase64(text: string): boolean {
+  if (text.length === 0 || text.length % 4 !== 0) return false;
+  // Padding may only be a trailing run of at most two '=' characters.
+  let padding = 0;
+  while (padding < 2 && text.charCodeAt(text.length - 1 - padding) === 61) {
+    padding += 1;
+  }
+  const dataEnd = text.length - padding;
+  if (padding === 2 && text.charCodeAt(dataEnd - 1) === 61) return false;
+  for (let i = 0; i < dataEnd; i += 1) {
+    const c = text.charCodeAt(i);
+    const isAlpha = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    const isDigit = c >= 48 && c <= 57;
+    if (!isAlpha && !isDigit && c !== 43 && c !== 47) return false;
+  }
+  return true;
+}
+
 export function fromB64(text, field, code: string = DataLockErrorCode.INVALID_KEYRING, options: any = {}) {
-  if (typeof text !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text)) {
+  if (typeof text !== 'string' || !isStandardBase64(text)) {
     throw new DataLockError(code, `Missing or invalid base64 field: ${field}`);
   }
   if (options.exactLength !== undefined && text.length > maxB64Chars(options.exactLength)) {

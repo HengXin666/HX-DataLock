@@ -16,6 +16,7 @@ from .constants import (
     KEY_LENGTH,
     KEYRING_SCHEMA,
     MAX_KEYRING_JSON_BYTES,
+    MAX_V1_FILE_BYTES,
     PUBLIC_KEY_SCHEMA,
 )
 from .crypto_codec import (
@@ -213,8 +214,10 @@ def send_file_with_public_doc(
     expected_key_id: str | None = None,
 ) -> DataEnvelope:
     public_key_document = PublicKeyDocument.read(public_key_document_path)
+    # lockBytes enforces the v1 limit, so the file helper inherits it here rather
+    # than reading an oversized file into memory first.
     envelope = makeSenderDataLock(public_key_document, expected_key_id=expected_key_id).lockBytes(
-        Path(input_path).read_bytes()
+        read_within_v1_limit(input_path)
     )
     envelope.write(output_path)
     return envelope
@@ -227,9 +230,20 @@ def send_file(keyring_path: str | Path, input_path: str | Path, output_path: str
     receive full Keyring material. This helper is kept for v1 API compatibility.
     """
     keyring = load_keyring(keyring_path)
-    envelope = encrypt_message(keyring, Path(input_path).read_bytes())
+    envelope = encrypt_message(keyring, read_within_v1_limit(input_path))
     envelope.write(output_path)
     return envelope
+
+
+def read_within_v1_limit(input_path: str | Path) -> bytes:
+    """Read a local file, refusing anything a v1 Full Data Envelope cannot hold."""
+    input_file = Path(input_path)
+    if input_file.stat().st_size > MAX_V1_FILE_BYTES:
+        raise DataLockError(
+            DataLockErrorCode.OVERSIZED_FILE,
+            "V1 Full Data Envelopes support local files up to 25 MB",
+        )
+    return input_file.read_bytes()
 
 
 def open_file(

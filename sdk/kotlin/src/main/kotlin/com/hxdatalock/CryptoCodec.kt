@@ -2,6 +2,7 @@ package com.hxdatalock
 
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
 import org.bouncycastle.asn1.ASN1OctetString
+import org.bouncycastle.asn1.edec.EdECObjectIdentifiers
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.crypto.agreement.X25519Agreement
 import org.bouncycastle.crypto.digests.SHA256Digest
@@ -16,6 +17,7 @@ import java.security.SecureRandom
 import java.security.Security
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.text.Normalizer
 import java.util.Base64
 import javax.crypto.Cipher
@@ -71,7 +73,11 @@ internal object CryptoCodec {
         }
     }
 
-    fun utcNow(): String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+    // Millisecond precision, matching Python and Node. ISO_INSTANT renders
+    // nanoseconds when the clock offers them, which would make stable-JSON
+    // signatures and text diffs disagree across languages.
+    fun utcNow(): String =
+        DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
 
     fun sha256Base64Url(data: ByteArray): String = b64Url.encodeToString(MessageDigest.getInstance("SHA-256").digest(data))
 
@@ -99,6 +105,15 @@ internal object CryptoCodec {
                 throw DataLockException(code, "keyId does not match the Write Key")
             }
             val info = SubjectPublicKeyInfo.getInstance(publicDer)
+            // Reject other curves instead of reading their 32 raw bytes as an
+            // X25519 point. An Ed25519 key is also 32 bytes, so silence here
+            // would turn a wrong-algorithm document into a key-agreement bug.
+            if (info.algorithm.algorithm != EdECObjectIdentifiers.id_X25519) {
+                throw DataLockException(
+                    DataLockErrorCode.UNSUPPORTED_ALGORITHM,
+                    "publicWriteKey.spki is not an X25519 public key",
+                )
+            }
             return X25519PublicKeyParameters(info.publicKeyData.bytes, 0)
         } catch (ex: DataLockException) {
             throw ex
@@ -254,6 +269,12 @@ internal object CryptoCodec {
             validateEnvelopeFields(raw)
             val ephemeralDer = fromB64(raw["ephemeralPublicKey"], "ephemeralPublicKey", DataLockErrorCode.TAMPERED_ENVELOPE, maxLength = X25519_SPKI_MAX_BYTES)
             val ephemeralInfo = SubjectPublicKeyInfo.getInstance(ephemeralDer)
+            if (ephemeralInfo.algorithm.algorithm != EdECObjectIdentifiers.id_X25519) {
+                throw DataLockException(
+                    DataLockErrorCode.UNSUPPORTED_ALGORITHM,
+                    "ephemeralPublicKey is not an X25519 public key",
+                )
+            }
             val ephemeralPublic = X25519PublicKeyParameters(ephemeralInfo.publicKeyData.bytes, 0)
             val sharedSecret = exchange(readKey, ephemeralPublic)
             val contentKey = hkdf(
