@@ -44,7 +44,7 @@ def _read_password(password_env: str | None, *, confirm: bool = False) -> str:
 def _report_password_strength(report: dict) -> None:
     """Surface the Password Strength Report before the Keyring is written.
 
-    ADR 0012: a weak Master Password warns but does not block Keyring creation.
+    A weak Master Password blocks creation unless --allow-weak-password is set.
     """
     print(f"Master Password strength: {report['level']}")
     for warning in report.get("warnings", []):
@@ -59,15 +59,23 @@ def _cmd_init(args: argparse.Namespace) -> None:
         _read_password(args.password_env, confirm=True),
         scrypt_n=args.scrypt_n,
         on_password_report=_report_password_strength,
+        allow_weak_password=args.allow_weak_password,
+        allow_low_scrypt_n=args.allow_low_scrypt_n,
     )
     print(f"Keyring written: {args.keyring}")
     print(f"Write Key ID: {keyring.key_id}")
+    print(
+        "Keep this Keyring on private local storage. "
+        "Do not commit it to public GitHub or other public storage. "
+        "Publish a Public Key Document for senders."
+    )
 
 
 def _cmd_lock(args: argparse.Namespace) -> None:
     sender = makeSenderDataLock(
         PublicKeyDocument.read(args.public),
         expected_key_id=args.expect_key_id,
+        allow_unpinned_public_key=args.allow_unpinned_public_key,
     )
     sender.lockFile(args.input, args.output)
     print(f"Data Envelope written: {args.output}")
@@ -154,15 +162,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    init = subcommands.add_parser("init", help="create a Keyring for GitHub storage")
+    init = subcommands.add_parser(
+        "init",
+        help="create a private local Keyring (never publish it to public GitHub or other public storage)",
+    )
     init.add_argument("--keyring", default="keyring.hxdl.json")
     init.add_argument("--password-env")
     init.add_argument("--scrypt-n", type=int, default=DEFAULT_SCRYPT_N)
+    init.add_argument(
+        "--allow-weak-password",
+        action="store_true",
+        help="create a Keyring even when the Master Password is weak",
+    )
+    init.add_argument(
+        "--allow-low-scrypt-n",
+        action="store_true",
+        help="allow scrypt N below the create-time floor; readers still open older Keyrings",
+    )
     init.set_defaults(func=_cmd_init)
 
     lock = subcommands.add_parser("lock", help="lock a local file with a Public Key Document")
     lock.add_argument("--public", required=True)
-    lock.add_argument("--expect-key-id")
+    lock.add_argument("--expect-key-id", help="recipient keyId the Public Key Document must match")
+    lock.add_argument(
+        "--allow-unpinned-public-key",
+        action="store_true",
+        help="lock without pinning the recipient keyId (unsafe if the Public Key Document can be replaced)",
+    )
     lock.add_argument("--in", dest="input", required=True)
     lock.add_argument("--out", dest="output", required=True)
     lock.set_defaults(func=_cmd_lock)

@@ -106,5 +106,5 @@ export function checkPasswordStrength(masterPassword) {
   } else if (masterPassword.length >= 20 && uniqueChars >= 10) {
     level = 'good';
   }
-  return { level, allowed: true, warnings, suggestions, estimatedEntropyBits, compromised };
+  return { level, allowed: level !== 'weak', warnings, suggestions, estimatedEntropyBits, compromised };
 }

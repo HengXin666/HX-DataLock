@@ -122,7 +122,7 @@ def check_password_strength(master_password: str) -> PasswordStrengthReport:
 
     return {
         "level": level,
-        "allowed": True,
+        "allowed": level != "weak",
         "warnings": warnings,
         "suggestions": suggestions,
         "estimatedEntropyBits": estimated_entropy,

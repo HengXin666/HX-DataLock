@@ -10,6 +10,9 @@ enum class DataLockErrorCode {
     OVERSIZED_FILE,
     INVALID_UTF8,
     UNSUPPORTED_ALGORITHM,
+    WEAK_MASTER_PASSWORD,
+    INSECURE_SCRYPT_PARAMETERS,
+    UNPINNED_PUBLIC_KEY,
 }
 
 class DataLockException(

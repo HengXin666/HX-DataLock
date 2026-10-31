@@ -9,7 +9,10 @@ DEFAULT_SCRYPT_R = 8
 DEFAULT_SCRYPT_P = 1
 KEY_LENGTH = 32
 
+# Readers still accept Keyrings created at the historical floor. New Keyrings
+# must use MIN_CREATE_SCRYPT_N unless the caller opts into a lower N.
 MIN_SCRYPT_N = 2**14
+MIN_CREATE_SCRYPT_N = 2**17
 MAX_SCRYPT_N = 2**20
 MAX_SCRYPT_R = 16
 MAX_SCRYPT_P = 4

@@ -35,6 +35,7 @@ def test_cli_init_confirms_master_password_interactively(tmp_path: Path) -> None
         str(keyring_path),
         "--scrypt-n",
         "16384",
+        "--allow-low-scrypt-n",
         input_text=f"{PASSWORD}\n{PASSWORD}\n",
     )
 
@@ -42,6 +43,120 @@ def test_cli_init_confirms_master_password_interactively(tmp_path: Path) -> None
     keyring = json.loads(keyring_path.read_text(encoding="utf-8"))
     assert keyring["schema"] == "hxdl.keyring.v1"
     assert keyring["encryptedReadKey"]
+
+
+def test_cli_init_rejects_weak_password_and_low_scrypt_n_unless_opt_in(tmp_path: Path) -> None:
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    weak_env = {"HXDL_MASTER_PASSWORD": "password"}
+
+    rejected_password = run_hxdl(
+        "init",
+        "--keyring",
+        str(keyring_path),
+        "--password-env",
+        "HXDL_MASTER_PASSWORD",
+        "--scrypt-n",
+        "16384",
+        "--allow-low-scrypt-n",
+        env=weak_env,
+    )
+    assert rejected_password.returncode != 0
+    assert "WEAK_MASTER_PASSWORD" in rejected_password.stderr
+    assert not keyring_path.exists()
+
+    allowed_password = run_hxdl(
+        "init",
+        "--keyring",
+        str(keyring_path),
+        "--password-env",
+        "HXDL_MASTER_PASSWORD",
+        "--scrypt-n",
+        "16384",
+        "--allow-low-scrypt-n",
+        "--allow-weak-password",
+        env=weak_env,
+    )
+    assert allowed_password.returncode == 0, allowed_password.stderr
+    assert keyring_path.exists()
+    keyring_path.unlink()
+
+    rejected_scrypt = run_hxdl(
+        "init",
+        "--keyring",
+        str(keyring_path),
+        "--password-env",
+        "HXDL_MASTER_PASSWORD",
+        "--scrypt-n",
+        "16384",
+        env={"HXDL_MASTER_PASSWORD": PASSWORD},
+    )
+    assert rejected_scrypt.returncode != 0
+    assert "INSECURE_SCRYPT_PARAMETERS" in rejected_scrypt.stderr
+    assert not keyring_path.exists()
+
+
+def test_cli_lock_requires_expect_key_id_unless_opt_out(tmp_path: Path) -> None:
+    keyring_path = tmp_path / "keyring.hxdl.json"
+    public_path = tmp_path / "public.hxdl.json"
+    plaintext_path = tmp_path / "payload.bin"
+    envelope_path = tmp_path / "payload.hxdl.json"
+    env = {"HXDL_MASTER_PASSWORD": PASSWORD}
+    assert (
+        run_hxdl(
+            "init",
+            "--keyring",
+            str(keyring_path),
+            "--password-env",
+            "HXDL_MASTER_PASSWORD",
+            "--scrypt-n",
+            "16384",
+            "--allow-low-scrypt-n",
+            env=env,
+        ).returncode
+        == 0
+    )
+    assert run_hxdl("export-public", "--keyring", str(keyring_path), "--out", str(public_path)).returncode == 0
+    key_id = json.loads(public_path.read_text(encoding="utf-8"))["publicWriteKey"]["keyId"]
+    plaintext_path.write_bytes(b"pin me")
+
+    unpinned = run_hxdl(
+        "lock",
+        "--public",
+        str(public_path),
+        "--in",
+        str(plaintext_path),
+        "--out",
+        str(envelope_path),
+    )
+    assert unpinned.returncode != 0
+    assert "UNPINNED_PUBLIC_KEY" in unpinned.stderr
+    assert not envelope_path.exists()
+
+    opted_out = run_hxdl(
+        "lock",
+        "--public",
+        str(public_path),
+        "--allow-unpinned-public-key",
+        "--in",
+        str(plaintext_path),
+        "--out",
+        str(envelope_path),
+    )
+    assert opted_out.returncode == 0, opted_out.stderr
+    envelope_path.unlink()
+
+    pinned = run_hxdl(
+        "lock",
+        "--public",
+        str(public_path),
+        "--expect-key-id",
+        key_id,
+        "--in",
+        str(plaintext_path),
+        "--out",
+        str(envelope_path),
+    )
+    assert pinned.returncode == 0, pinned.stderr
 
 
 def test_cli_init_rejects_mismatched_interactive_confirmation(tmp_path: Path) -> None:
@@ -53,6 +168,7 @@ def test_cli_init_rejects_mismatched_interactive_confirmation(tmp_path: Path) ->
         str(keyring_path),
         "--scrypt-n",
         "16384",
+        "--allow-low-scrypt-n",
         input_text=f"{PASSWORD}\nwrong password\n",
     )
 
@@ -77,6 +193,7 @@ def test_cli_v1_export_public_lock_and_open_round_trip(tmp_path: Path) -> None:
         "HXDL_MASTER_PASSWORD",
         "--scrypt-n",
         "16384",
+        "--allow-low-scrypt-n",
         env=env,
     )
     assert init_result.returncode == 0, init_result.stderr
@@ -98,6 +215,8 @@ def test_cli_v1_export_public_lock_and_open_round_trip(tmp_path: Path) -> None:
         "lock",
         "--public",
         str(public_path),
+        "--expect-key-id",
+        public_document["publicWriteKey"]["keyId"],
         "--in",
         str(plaintext_path),
         "--out",
@@ -151,6 +270,7 @@ def test_cli_lock_rejects_public_key_document_key_id_mismatch(tmp_path: Path) ->
             "HXDL_MASTER_PASSWORD",
             "--scrypt-n",
             "16384",
+        "--allow-low-scrypt-n",
             env=env,
         ).returncode
         == 0
@@ -164,6 +284,7 @@ def test_cli_lock_rejects_public_key_document_key_id_mismatch(tmp_path: Path) ->
             "HXDL_MASTER_PASSWORD",
             "--scrypt-n",
             "16384",
+        "--allow-low-scrypt-n",
             env=env,
         ).returncode
         == 0
@@ -231,6 +352,7 @@ def test_cli_verify_keyring_and_public_do_not_require_master_password(tmp_path: 
             "HXDL_MASTER_PASSWORD",
             "--scrypt-n",
             "16384",
+        "--allow-low-scrypt-n",
             env=env,
         ).returncode
         == 0
@@ -271,6 +393,7 @@ def test_cli_verify_rejects_documents_that_do_not_use_stable_json(tmp_path: Path
             "HXDL_MASTER_PASSWORD",
             "--scrypt-n",
             "16384",
+        "--allow-low-scrypt-n",
             env=env,
         ).returncode
         == 0
@@ -310,6 +433,7 @@ def test_cli_bench_reports_v1_operations_as_json_lines(tmp_path: Path) -> None:
             "HXDL_MASTER_PASSWORD",
             "--scrypt-n",
             "16384",
+        "--allow-low-scrypt-n",
             env=env,
         ).returncode
         == 0

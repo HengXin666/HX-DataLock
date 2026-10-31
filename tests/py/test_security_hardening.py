@@ -4,6 +4,7 @@ import base64
 import copy
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +14,8 @@ from hx_datalock import (
     DataLockErrorCode,
     Keyring,
     create_keyring,
+    decrypt_message,
+    encrypt_message,
     export_public_key_document,
     init_keyring,
     makeSenderDataLock,
@@ -38,7 +41,9 @@ def test_sender_file_helper_accepts_public_key_document(tmp_path):
     public_document.write(public_path)
     input_path.write_text("hello", encoding="utf-8")
 
-    envelope = send_file_with_public_doc(public_path, input_path, output_path)
+    envelope = send_file_with_public_doc(
+        public_path, input_path, output_path, expected_key_id=public_document.key_id
+    )
     assert envelope.raw["recipientKeyId"] == public_document.key_id
 
 
@@ -99,26 +104,88 @@ def test_keyring_verify_rejects_oversized_scrypt_n():
     assert exc_info.value.code == DataLockErrorCode.INVALID_KEYRING
 
 
-def test_password_strength_report_reaches_the_caller(tmp_path):
-    """ADR 0012 requires the report before Keyring creation, so it must not be discarded."""
+def test_password_strength_report_reaches_the_caller_before_refusal(tmp_path):
+    """The report is delivered before a weak Master Password is refused."""
     seen = []
-    create_keyring("password", scrypt_n=16384, on_password_report=seen.append)
+    with pytest.raises(DataLockError) as rejected:
+        create_keyring(
+            "password",
+            scrypt_n=16384,
+            allow_low_scrypt_n=True,
+            on_password_report=seen.append,
+        )
 
+    assert rejected.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
     assert len(seen) == 1
-    assert seen[0]["allowed"] is True
+    assert seen[0]["allowed"] is False
     assert seen[0]["level"] == "weak"
     assert seen[0]["warnings"]
 
-    # A weak password still creates a Keyring in v1; the report only informs.
-    assert load_keyring_path_roundtrip(tmp_path, "password") is not None
+    seen.clear()
+    keyring = create_keyring(
+        "password",
+        scrypt_n=16384,
+        allow_low_scrypt_n=True,
+        allow_weak_password=True,
+        on_password_report=seen.append,
+    )
+    assert seen[0]["level"] == "weak"
+    assert decrypt_message(keyring, "password", encrypt_message(keyring, b"opened")) == b"opened"
 
-
-def load_keyring_path_roundtrip(tmp_path, password):
     from hx_datalock import load_keyring
 
     path = tmp_path / "roundtrip.hxdl.json"
-    init_keyring(path, password, scrypt_n=16384)
-    return load_keyring(path)
+    written = init_keyring(
+        path,
+        "password",
+        scrypt_n=16384,
+        allow_low_scrypt_n=True,
+        allow_weak_password=True,
+    )
+    loaded = load_keyring(path)
+    assert loaded.key_id == written.key_id
+    assert decrypt_message(loaded, "password", encrypt_message(loaded, b"opened")) == b"opened"
+
+
+def test_create_rejects_scrypt_n_below_the_create_floor():
+    with pytest.raises(DataLockError) as rejected:
+        create_keyring(MASTER_PASSWORD, scrypt_n=2**14)
+    assert rejected.value.code is DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS
+
+    keyring = create_keyring(MASTER_PASSWORD, scrypt_n=2**14, allow_low_scrypt_n=True)
+    user = makeUserDataLock(keyring, {"masterPassword": MASTER_PASSWORD})
+    assert user.openBytes(encrypt_message(keyring, b"legacy")) == b"legacy"
+
+
+def test_docs_do_not_recommend_public_keyring_storage():
+    watched = [
+        Path("CONTEXT.md"),
+        Path("README.md"),
+        Path("docs/adr/0001-password-wrapped-x25519-keyring.md"),
+        Path("docs/spec/v1.md"),
+        Path("sdk/py/src/hx_datalock/cli.py"),
+        Path("examples/py/decrypt_message.py"),
+    ]
+    blob = "\n".join(path.read_text(encoding="utf-8") for path in watched)
+    assert "GitHub-stored Keyring" not in blob
+    assert "create a Keyring for GitHub storage" not in blob
+    assert "GitHub 仓库中的 Keyring" not in blob
+
+
+def test_sender_datalock_requires_expected_key_id_unless_opt_out():
+    document = export_public_key_document(
+        create_keyring(MASTER_PASSWORD, scrypt_n=2**14, allow_low_scrypt_n=True)
+    )
+
+    with pytest.raises(DataLockError) as rejected:
+        makeSenderDataLock(document)
+    assert rejected.value.code is DataLockErrorCode.UNPINNED_PUBLIC_KEY
+
+    unpinned = makeSenderDataLock(document, allow_unpinned_public_key=True)
+    assert unpinned.lockBytes(b"opt out").raw["recipientKeyId"] == document.key_id
+
+    pinned = makeSenderDataLock(document, expected_key_id=document.key_id)
+    assert pinned.lockBytes(b"pinned").raw["recipientKeyId"] == document.key_id
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file mode assertions require a POSIX platform")
@@ -131,7 +198,7 @@ def test_decrypted_plaintext_is_written_owner_only(tmp_path):
     envelope_path = tmp_path / "message.hxdl.json"
     output_path = tmp_path / "opened.bin"
 
-    init_keyring(keyring_path, password, scrypt_n=16384)
+    init_keyring(keyring_path, password, scrypt_n=16384, allow_low_scrypt_n=True)
     encrypt_message(load_keyring(keyring_path), b"secret").write(envelope_path)
     open_file(keyring_path, envelope_path, output_path, password)
 
@@ -151,8 +218,8 @@ def test_creation_time_must_be_a_millisecond_timestamp():
     a number, an object, null, or a list, so display and any time-based decision
     built on it were trivially forgeable.
     """
-    keyring = create_keyring(MASTER_PASSWORD, scrypt_n=16384)
-    envelope = makeSenderDataLock(export_public_key_document(keyring)).lockBytes(b"probe")
+    keyring = create_keyring(MASTER_PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    envelope = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id).lockBytes(b"probe")
 
     for bad in (12345, None, True, ["x"], {"a": 1}, "1999-01-01", "2026-09-27T11:00:00Z"):
         tampered = dict(envelope.raw)
@@ -180,8 +247,8 @@ def test_low_order_ephemeral_key_reports_a_stable_error_code():
     "ValueError: Error computing shared key." in Python and an ERR_OSSL_* error in
     Node, which bypassed the stable error-code contract of ADR 0021 entirely.
     """
-    keyring = create_keyring(MASTER_PASSWORD, scrypt_n=16384)
-    envelope = makeSenderDataLock(export_public_key_document(keyring)).lockBytes(b"probe")
+    keyring = create_keyring(MASTER_PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    envelope = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id).lockBytes(b"probe")
     user = makeUserDataLock(keyring, {"masterPassword": MASTER_PASSWORD})
 
     zero_point = base64.b64encode(
@@ -198,7 +265,7 @@ def test_low_order_ephemeral_key_reports_a_stable_error_code():
 def test_envelope_verify_rejects_oversized_ciphertext_without_decode():
     keyring = create_keyring(MASTER_PASSWORD)
     public_document = export_public_key_document(keyring)
-    envelope = makeSenderDataLock(public_document).lockBytes(b"hello")
+    envelope = makeSenderDataLock(public_document, expected_key_id=public_document.key_id).lockBytes(b"hello")
     raw = copy.deepcopy(envelope.raw)
     max_b64_chars = ((MAX_V1_FILE_BYTES + 2) // 3) * 4
     raw["ciphertext"] = "A" * (max_b64_chars + 4)

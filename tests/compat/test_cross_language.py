@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -60,6 +61,7 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
             "HXDL_TEST_PASSWORD",
             "--scrypt-n",
             "16384",
+            "--allow-low-scrypt-n",
         ],
         check=True,
         env=env,
@@ -68,6 +70,7 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
         [*_python_cli(), "export-public", "--keyring", str(keyring_path), "--out", str(public_path)],
         check=True,
     )
+    public_key_id = json.loads(public_path.read_text(encoding="utf-8"))["publicWriteKey"]["keyId"]
 
     lock_commands = {
         "python": lambda plain_path, envelope_path: subprocess.run(
@@ -76,6 +79,8 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
                 "lock",
                 "--public",
                 str(public_path),
+                "--expect-key-id",
+                public_key_id,
                 "--in",
                 str(plain_path),
                 "--out",
@@ -89,6 +94,8 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
                 "lock",
                 "--public",
                 str(public_path),
+                "--expect-key-id",
+                public_key_id,
                 "--in",
                 str(plain_path),
                 "--out",
@@ -177,6 +184,7 @@ def test_python_encrypts_and_node_decrypts(tmp_path: Path) -> None:
             "HXDL_TEST_PASSWORD",
             "--scrypt-n",
             "16384",
+            "--allow-low-scrypt-n",
         ],
         check=True,
         env=env,
@@ -225,6 +233,7 @@ def test_node_locks_with_public_document_and_python_opens(tmp_path: Path) -> Non
             "HXDL_TEST_PASSWORD",
             "--scrypt-n",
             "16384",
+            "--allow-low-scrypt-n",
         ],
         check=True,
         env=env,
@@ -249,6 +258,8 @@ def test_node_locks_with_public_document_and_python_opens(tmp_path: Path) -> Non
             "lock",
             "--public",
             str(public_path),
+            "--expect-key-id",
+            load_keyring(keyring_path).key_id,
             "--in",
             str(plain_path),
             "--out",
@@ -271,7 +282,7 @@ def test_python_public_document_works_with_node_lock_and_open(tmp_path: Path) ->
     opened_path = tmp_path / "opened.txt"
     env = os.environ | {"HXDL_TEST_PASSWORD": password}
 
-    keyring = init_keyring(keyring_path, password, scrypt_n=16384)
+    keyring = init_keyring(keyring_path, password, scrypt_n=16384, allow_low_scrypt_n=True)
     export_public_key_document(keyring).write(public_path)
     plain_path.write_bytes("Python 公钥文档, Node v1 CLI".encode("utf-8"))
 
@@ -282,6 +293,8 @@ def test_python_public_document_works_with_node_lock_and_open(tmp_path: Path) ->
             "lock",
             "--public",
             str(public_path),
+            "--expect-key-id",
+            keyring.key_id,
             "--in",
             str(plain_path),
             "--out",
@@ -319,7 +332,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     opened_path = tmp_path / "opened.txt"
     env = os.environ | {"HXDL_TEST_PASSWORD": password}
 
-    keyring = init_keyring(keyring_path, password, scrypt_n=16384)
+    keyring = init_keyring(keyring_path, password, scrypt_n=16384, allow_low_scrypt_n=True)
     export_public_key_document(keyring).write(public_path)
     plain_path.write_bytes(b"stable node cli failures")
 
@@ -349,6 +362,8 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
             "lock",
             "--public",
             str(public_path),
+            "--expect-key-id",
+            keyring.key_id,
             "--in",
             str(plain_path),
             "--out",
@@ -380,7 +395,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
     assert DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING.value in wrong_password.stderr
 
     second_keyring_path = tmp_path / "second-keyring.hxdl.json"
-    init_keyring(second_keyring_path, "another correct horse battery staple", scrypt_n=16384)
+    init_keyring(second_keyring_path, "another correct horse battery staple", scrypt_n=16384, allow_low_scrypt_n=True)
     mismatch_result = subprocess.run(
         [
             "node",
@@ -496,6 +511,7 @@ def test_node_cli_rejects_oversized_v1_files(tmp_path: Path) -> None:
             "HXDL_TEST_PASSWORD",
             "--scrypt-n",
             "16384",
+            "--allow-low-scrypt-n",
         ],
         check=True,
         env=env,
@@ -523,6 +539,8 @@ def test_node_cli_rejects_oversized_v1_files(tmp_path: Path) -> None:
             "lock",
             "--public",
             str(public_path),
+            "--expect-key-id",
+            load_keyring(keyring_path).key_id,
             "--in",
             str(oversized_path),
             "--out",
@@ -544,8 +562,8 @@ def test_node_cli_lock_rejects_public_key_document_key_id_mismatch(tmp_path: Pat
     replaced_public_path = tmp_path / "replaced-public.hxdl.json"
     plain_path = tmp_path / "plain.txt"
     output_path = tmp_path / "sealed.hxdl.json"
-    trusted_keyring = init_keyring(trusted_keyring_path, PASSWORD, scrypt_n=16384)
-    replaced_keyring = init_keyring(replaced_keyring_path, f"{PASSWORD} replacement", scrypt_n=16384)
+    trusted_keyring = init_keyring(trusted_keyring_path, PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    replaced_keyring = init_keyring(replaced_keyring_path, f"{PASSWORD} replacement", scrypt_n=16384, allow_low_scrypt_n=True)
     export_public_key_document(trusted_keyring).write(trusted_public_path)
     export_public_key_document(replaced_keyring).write(replaced_public_path)
     trusted_key_id = export_public_key_document(trusted_keyring).key_id
@@ -604,7 +622,7 @@ def test_node_cli_lock_rejects_oversized_public_key_document(tmp_path: Path) -> 
 def test_node_cli_verify_rejects_non_stable_public_key_document(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     public_path = tmp_path / "public.hxdl.json"
-    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384)
+    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     public_document = export_public_key_document(keyring)
     public_path.write_text(__import__("json").dumps(public_document.raw, separators=(",", ":")), encoding="utf-8")
 
@@ -639,16 +657,16 @@ import {{
 }} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
-const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const keyring = createKeyring(password, {{ scryptN: 16384, allowLowScryptN: true }});
 const publicDocument = exportPublicKeyDocument(keyring);
-const replacedPublicDocument = exportPublicKeyDocument(createKeyring(`${{password}} replacement`, {{ scryptN: 16384 }}));
+const replacedPublicDocument = exportPublicKeyDocument(createKeyring(`${{password}} replacement`, {{ scryptN: 16384, allowLowScryptN: true }}));
 const report = checkPasswordStrength('password');
-const sender = makeSenderDataLock(publicDocument);
+const sender = makeSenderDataLock(publicDocument, {{ expectedKeyId: publicDocument.keyId }});
 const envelope = sender.lockText('typescript sdk payload');
 const user = makeUserDataLock(keyring, {{ masterPassword: password }});
 const opened = user.openText(envelope);
 
-if (report.allowed !== true || report.level !== 'weak') throw new Error('bad password report');
+if (report.allowed !== false || report.level !== 'weak') throw new Error('bad password report');
 if (opened !== 'typescript sdk payload') throw new Error('round trip failed');
 if (typeof sender.openBytes !== 'undefined') throw new Error('sender can open');
 for (const name of ['openBytes', 'openText', 'openFile', 'lockBytes', 'lockText', 'lockFile', 'close']) {{
@@ -672,6 +690,28 @@ try {{
 }} catch (error) {{
   if (error.code !== DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT) throw error;
 }}
+try {{
+  makeSenderDataLock(publicDocument);
+  throw new Error('accepted an unpinned public document');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.UNPINNED_PUBLIC_KEY) throw error;
+}}
+try {{
+  createKeyring('password', {{ scryptN: 16384, allowLowScryptN: true }});
+  throw new Error('accepted a weak master password');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.WEAK_MASTER_PASSWORD) throw error;
+}}
+try {{
+  createKeyring(password, {{ scryptN: 16384 }});
+  throw new Error('accepted a low scrypt N');
+}} catch (error) {{
+  if (error.code !== DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS) throw error;
+}}
+const unpinned = makeSenderDataLock(publicDocument, {{ allowUnpinnedPublicKey: true }});
+if (unpinned.lockText('opt out').raw.recipientKeyId !== publicDocument.keyId) {{
+  throw new Error('unpinned opt-out did not lock');
+}}
 user.close();
 """,
         encoding="utf-8",
@@ -691,7 +731,7 @@ import {{
 }} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
-const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const keyring = createKeyring(password, {{ scryptN: 16384, allowLowScryptN: true }});
 const user = makeUserDataLock(keyring, {{ masterPassword: password }});
 const envelope = user.lockBytes(Buffer.from([0xff]));
 
@@ -730,8 +770,8 @@ import {{
 import {{ DataEnvelope }} from {str((Path.cwd() / "sdk/node/dist/documents.js").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
-const keyring = createKeyring(password, {{ scryptN: 16384 }});
-const sender = makeSenderDataLock(exportPublicKeyDocument(keyring));
+const keyring = createKeyring(password, {{ scryptN: 16384, allowLowScryptN: true }});
+const sender = makeSenderDataLock(exportPublicKeyDocument(keyring), {{ expectedKeyId: keyring.keyId }});
 const user = makeUserDataLock(keyring, {{ masterPassword: password }});
 const envelope = sender.lockBytes(Buffer.from('probe'));
 
@@ -768,8 +808,8 @@ try {{
     # Python side of the same two contracts.
     from hx_datalock import DataLockError, makeSenderDataLock, makeUserDataLock
 
-    keyring = init_keyring(tmp_path / "py-keyring.hxdl.json", PASSWORD, scrypt_n=16384)
-    py_sender = makeSenderDataLock(export_public_key_document(keyring))
+    keyring = init_keyring(tmp_path / "py-keyring.hxdl.json", PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    py_sender = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id)
 
     with pytest.raises(DataLockError) as surrogate_exc:
         py_sender.lockText("bad \ud800 text")
@@ -797,7 +837,7 @@ import {{ Keyring, DataEnvelope }} from {str((Path.cwd() / "sdk/node/dist/docume
 import {{ MAX_V1_FILE_BYTES }} from {str((Path.cwd() / "sdk/node/dist/constants.js").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
-const keyring = createKeyring(password, {{ scryptN: 16384 }});
+const keyring = createKeyring(password, {{ scryptN: 16384, allowLowScryptN: true }});
 const user = makeUserDataLock(keyring, {{ masterPassword: password }});
 const envelope = user.lockBytes(Buffer.from('hello'));
 
@@ -856,8 +896,8 @@ import {{
 }} from {str((Path.cwd() / "sdk/node/hx-datalock.mjs").as_uri())!r};
 
 const password = 'correct horse battery staple for hx datalock';
-const keyring = createKeyring(password, {{ scryptN: 16384 }});
-const sender = makeSenderDataLock(exportPublicKeyDocument(keyring));
+const keyring = createKeyring(password, {{ scryptN: 16384, allowLowScryptN: true }});
+const sender = makeSenderDataLock(exportPublicKeyDocument(keyring), {{ expectedKeyId: keyring.keyId }});
 const user = makeUserDataLock(keyring, {{ masterPassword: password }});
 
 for (const mb of [1, 4, 10, 25]) {{
@@ -883,8 +923,8 @@ def test_lock_bytes_rejects_payloads_over_the_v1_limit(tmp_path: Path) -> None:
     could not read back.
     """
     over_limit = MAX_V1_FILE_BYTES + 1
-    keyring = init_keyring(tmp_path / "limit-keyring.hxdl.json", PASSWORD, scrypt_n=16384)
-    sender = makeSenderDataLock(export_public_key_document(keyring))
+    keyring = init_keyring(tmp_path / "limit-keyring.hxdl.json", PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    sender = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id)
 
     with pytest.raises(DataLockError) as sender_exc:
         sender.lockBytes(b"A" * over_limit)
@@ -894,7 +934,10 @@ def test_lock_bytes_rejects_payloads_over_the_v1_limit(tmp_path: Path) -> None:
     oversized_file.write_bytes(b"A" * over_limit)
     with pytest.raises(DataLockError) as helper_exc:
         send_file_with_public_doc(
-            _write_public_document(tmp_path, keyring), oversized_file, tmp_path / "out.json"
+            _write_public_document(tmp_path, keyring),
+            oversized_file,
+            tmp_path / "out.json",
+            expected_key_id=keyring.key_id,
         )
     assert helper_exc.value.code == DataLockErrorCode.OVERSIZED_FILE
 
@@ -912,7 +955,7 @@ def test_simple_python_api_round_trips_file(tmp_path: Path) -> None:
     envelope_path = tmp_path / "sealed.hxdl.json"
     decrypted_path = tmp_path / "decrypted.txt"
 
-    init_keyring(keyring_path, password, scrypt_n=16384)
+    init_keyring(keyring_path, password, scrypt_n=16384, allow_low_scrypt_n=True)
     plain_path.write_bytes(b"simple api, hidden internals")
 
     send_file(keyring_path, plain_path, envelope_path)

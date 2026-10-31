@@ -19,7 +19,7 @@ def test_python_envelope_opens_with_kotlin_example(tmp_path: Path) -> None:
     keyring_path = tmp_path / "keyring.hxdl.json"
     envelope_path = tmp_path / "sealed.hxdl.json"
     opened_path = tmp_path / "opened.txt"
-    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384)
+    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
 
     encrypt_message(keyring, "Python 到 Kotlin".encode()).write(envelope_path)
 
@@ -41,7 +41,7 @@ def test_kotlin_example_locks_envelope_that_python_opens(tmp_path: Path) -> None
     keyring_path = tmp_path / "keyring.hxdl.json"
     plain_path = tmp_path / "plain.txt"
     envelope_path = tmp_path / "sealed.hxdl.json"
-    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384)
+    keyring = init_keyring(keyring_path, PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     plain_path.write_bytes("Kotlin 到 Python".encode())
 
     subprocess.run(

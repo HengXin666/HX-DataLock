@@ -1,0 +1,19 @@
+name: Keyring stays private
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  block-public-keyring:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse a Keyring in a public repository
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+          REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: bash scripts/refuse-public-keyring.sh

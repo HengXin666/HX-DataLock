@@ -17,6 +17,8 @@ from .constants import (
     KEYRING_SCHEMA,
     MAX_KEYRING_JSON_BYTES,
     MAX_V1_FILE_BYTES,
+    MIN_CREATE_SCRYPT_N,
+    MIN_SCRYPT_N,
     PUBLIC_KEY_SCHEMA,
 )
 from .crypto_codec import (
@@ -39,14 +41,30 @@ def create_keyring(
     *,
     scrypt_n: int = DEFAULT_SCRYPT_N,
     on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
+    allow_weak_password: bool = False,
+    allow_low_scrypt_n: bool = False,
 ) -> Keyring:
-    # ADR 0012 and the v1 spec require the Password Strength Report to reach the
-    # user before the Keyring is created, so the report is handed to the caller
-    # instead of being discarded. Weak passwords remain allowed in v1.
+    # ADR 0012 requires the Password Strength Report to reach the caller before
+    # any key material is derived. ADR 0025 then refuses a weak report unless
+    # the caller opts in. Opening an existing Keyring does not consult this check.
     report = check_password_strength(master_password)
     if on_password_report is not None:
         on_password_report(report)
+    if report["allowed"] is False and not allow_weak_password:
+        raise DataLockError(
+            DataLockErrorCode.WEAK_MASTER_PASSWORD,
+            "Master Password is too weak to create a Keyring. "
+            "Pass allow_weak_password=True to create one anyway. "
+            "Existing Keyrings can still be opened.",
+        )
     validate_scrypt_n(scrypt_n)
+    if scrypt_n < MIN_CREATE_SCRYPT_N and not allow_low_scrypt_n:
+        raise DataLockError(
+            DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS,
+            f"scrypt N {scrypt_n} is below the create-time minimum {MIN_CREATE_SCRYPT_N}. "
+            f"Readers still accept Keyrings down to {MIN_SCRYPT_N}. "
+            "Pass allow_low_scrypt_n=True to create one anyway.",
+        )
 
     private_key = x25519.X25519PrivateKey.generate()
     public_der = private_key.public_key().public_bytes(
@@ -89,9 +107,15 @@ def init_keyring(
     *,
     scrypt_n: int = DEFAULT_SCRYPT_N,
     on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
+    allow_weak_password: bool = False,
+    allow_low_scrypt_n: bool = False,
 ) -> Keyring:
     keyring = create_keyring(
-        master_password, scrypt_n=scrypt_n, on_password_report=on_password_report
+        master_password,
+        scrypt_n=scrypt_n,
+        on_password_report=on_password_report,
+        allow_weak_password=allow_weak_password,
+        allow_low_scrypt_n=allow_low_scrypt_n,
     )
     keyring.write(path)
     return keyring
@@ -155,6 +179,7 @@ def makeSenderDataLock(
     publicKeyDocument: PublicKeyDocument,
     *,
     expected_key_id: str | None = None,
+    allow_unpinned_public_key: bool = False,
 ) -> SenderDataLock:
     if isinstance(publicKeyDocument, Keyring) or (
         isinstance(publicKeyDocument, dict) and publicKeyDocument.get("schema") == KEYRING_SCHEMA
@@ -171,8 +196,20 @@ def makeSenderDataLock(
             "Sender DataLock requires a Public Key Document",
         )
     publicKeyDocument.verify()
-    if expected_key_id is not None:
+    if expected_key_id is not None and not isinstance(expected_key_id, str):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT,
+            "expected_key_id must be a string",
+        )
+    if expected_key_id:
         verify_public_key_document_key_id(publicKeyDocument, expected_key_id)
+    elif not allow_unpinned_public_key:
+        raise DataLockError(
+            DataLockErrorCode.UNPINNED_PUBLIC_KEY,
+            "Sender DataLock requires expected_key_id so a replaced Public Key Document "
+            "cannot be used by accident. Pass allow_unpinned_public_key=True only when "
+            "the document is already authenticated.",
+        )
     return SenderDataLock(publicKeyDocument)
 
 
@@ -196,8 +233,18 @@ def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
     return DataEnvelope(lock_bytes_with_public_key_raw(keyring.key_id, keyring.public_write_key, plaintext))
 
 
-def encrypt_message_for_sender(public_key_document: PublicKeyDocument, plaintext: bytes) -> DataEnvelope:
-    sender = makeSenderDataLock(public_key_document)
+def encrypt_message_for_sender(
+    public_key_document: PublicKeyDocument,
+    plaintext: bytes,
+    *,
+    expected_key_id: str | None = None,
+    allow_unpinned_public_key: bool = False,
+) -> DataEnvelope:
+    sender = makeSenderDataLock(
+        public_key_document,
+        expected_key_id=expected_key_id,
+        allow_unpinned_public_key=allow_unpinned_public_key,
+    )
     return sender.lockBytes(plaintext)
 
 
@@ -212,13 +259,16 @@ def send_file_with_public_doc(
     output_path: str | Path,
     *,
     expected_key_id: str | None = None,
+    allow_unpinned_public_key: bool = False,
 ) -> DataEnvelope:
     public_key_document = PublicKeyDocument.read(public_key_document_path)
     # lockBytes enforces the v1 limit, so the file helper inherits it here rather
     # than reading an oversized file into memory first.
-    envelope = makeSenderDataLock(public_key_document, expected_key_id=expected_key_id).lockBytes(
-        read_within_v1_limit(input_path)
-    )
+    envelope = makeSenderDataLock(
+        public_key_document,
+        expected_key_id=expected_key_id,
+        allow_unpinned_public_key=allow_unpinned_public_key,
+    ).lockBytes(read_within_v1_limit(input_path))
     envelope.write(output_path)
     return envelope
 

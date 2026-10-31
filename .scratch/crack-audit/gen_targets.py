@@ -30,7 +30,7 @@ index = []
 for name, pw, tier in CASES:
     for N in (int(sys.argv[1]) if len(sys.argv) > 1 else 2**18,):
         p = OUT / f"{name}_N{N}.json"
-        init_keyring(p, pw, scrypt_n=N)
+        init_keyring(p, pw, scrypt_n=N, allow_weak_password=True, allow_low_scrypt_n=True)
         index.append({"case": name, "tier": tier, "password": pw, "N": N, "keyring": str(p)})
         print(f"  {name:10s} N={N:<8d} {tier:16s} {pw}")
 

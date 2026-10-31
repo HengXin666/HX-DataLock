@@ -41,7 +41,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 idx = []
 for name, pw, tier in cases:
     p = OUT / f"{name}.json"
-    init_keyring(p, pw, scrypt_n=a.n)
+    init_keyring(p, pw, scrypt_n=a.n, allow_weak_password=True, allow_low_scrypt_n=True)
     idx.append({"case": name, "tier": tier, "password": pw, "keyring": str(p)})
 (OUT / "index.json").write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
 

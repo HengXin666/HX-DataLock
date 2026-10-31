@@ -7,11 +7,27 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 
-data class CreateKeyringOptions(val scryptN: Int = 262144)
+data class CreateKeyringOptions(
+    val scryptN: Int = 262144,
+    val allowWeakPassword: Boolean = false,
+    val allowLowScryptN: Boolean = false,
+)
 
 object HxDataLock {
     fun createKeyring(masterPassword: String, options: CreateKeyringOptions = CreateKeyringOptions()): Keyring {
+        if (!options.allowWeakPassword && PasswordStrength.isWeak(masterPassword)) {
+            throw DataLockException(
+                DataLockErrorCode.WEAK_MASTER_PASSWORD,
+                "Master Password is too weak to create a Keyring. Pass allowWeakPassword = true to create one anyway. Existing Keyrings can still be opened.",
+            )
+        }
         validateScryptN(options.scryptN)
+        if (options.scryptN < MIN_CREATE_SCRYPT_N && !options.allowLowScryptN) {
+            throw DataLockException(
+                DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS,
+                "scrypt N ${options.scryptN} is below the create-time minimum $MIN_CREATE_SCRYPT_N. Readers still accept Keyrings down to $MIN_SCRYPT_N. Pass allowLowScryptN = true to create one anyway.",
+            )
+        }
         val privateKey = CryptoCodec.generateKeyPair()
         val publicKey = privateKey.generatePublicKey()
         val publicDer = CryptoCodec.publicDer(publicKey)
