@@ -5,14 +5,42 @@ import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 
-data class CreateKeyringOptions(val scryptN: Int = 262144)
+data class CreateKeyringOptions(
+    val scryptN: Int = 262144,
+    val allowWeakPassword: Boolean = false,
+    val allowLowScryptN: Boolean = false,
+    val publicKeyring: Boolean = false,
+)
 
 object HxDataLock {
+    fun checkPasswordStrength(masterPassword: String): PasswordStrengthReport = PasswordStrength.check(masterPassword)
+
     fun createKeyring(masterPassword: String, options: CreateKeyringOptions = CreateKeyringOptions()): Keyring {
+        val report = PasswordStrength.check(masterPassword)
+        if (options.publicKeyring && !report.allowedForPublicKeyring) {
+            throw DataLockException(
+                DataLockErrorCode.WEAK_MASTER_PASSWORD,
+                "A public Keyring requires a Master Password of at least 80 estimated bits",
+            )
+        }
+        if (!options.publicKeyring && !report.allowed && !options.allowWeakPassword) {
+            throw DataLockException(
+                DataLockErrorCode.WEAK_MASTER_PASSWORD,
+                "Master Password is too weak to create a Keyring. Pass allowWeakPassword = true to create one anyway. Existing Keyrings can still be opened.",
+            )
+        }
         validateScryptN(options.scryptN)
+        if (options.scryptN < MIN_CREATE_SCRYPT_N && !options.allowLowScryptN) {
+            throw DataLockException(
+                DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS,
+                "scrypt N ${options.scryptN} is below the create-time minimum $MIN_CREATE_SCRYPT_N. Readers still accept Keyrings down to $MIN_SCRYPT_N. Pass allowLowScryptN = true to create one anyway.",
+            )
+        }
         val privateKey = CryptoCodec.generateKeyPair()
         val publicKey = privateKey.generatePublicKey()
         val publicDer = CryptoCodec.publicDer(publicKey)
@@ -49,14 +77,21 @@ object HxDataLock {
 
     fun loadKeyring(path: Path): Keyring = Keyring.read(path)
 
-    fun makeSenderDataLock(document: PublicKeyDocument, expectedKeyId: String? = null, requireExpectedKeyId: Boolean = false): SenderDataLock {
+    fun makeSenderDataLock(
+        document: PublicKeyDocument,
+        expectedKeyId: String? = null,
+        allowUnpinnedPublicKey: Boolean = false,
+    ): SenderDataLock {
         document.verify()
         if (expectedKeyId != null) {
             if (document.keyId != expectedKeyId) {
                 throw DataLockException(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, "Public Key Document keyId does not match the expected keyId")
             }
-        } else if (requireExpectedKeyId) {
-            throw DataLockException(DataLockErrorCode.UNPINNED_PUBLIC_KEY, "Sender DataLock requires expectedKeyId so a replaced Public Key Document is rejected")
+        } else if (!allowUnpinnedPublicKey) {
+            throw DataLockException(
+                DataLockErrorCode.UNPINNED_PUBLIC_KEY,
+                "Sender DataLock requires expectedKeyId so a replaced Public Key Document cannot be used by accident.",
+            )
         }
         return SenderDataLock(document)
     }
@@ -101,6 +136,25 @@ class SenderDataLock internal constructor(
         val envelope = lockBytes(Files.readAllBytes(inputPath))
         envelope.write(outputPath)
         return envelope
+    }
+
+    fun lockStream(
+        input: InputStream,
+        output: OutputStream,
+        chunkSize: Int = DEFAULT_STREAM_CHUNK_SIZE,
+        fileId: String? = null,
+        chunkIndex: Int? = null,
+    ): Map<String, Any?> {
+        document.verify()
+        return Stream.lock(
+            document.keyId,
+            CryptoCodec.loadPublicWriteKey(document.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT),
+            input,
+            output,
+            chunkSize,
+            fileId,
+            chunkIndex,
+        )
     }
 }
 
@@ -153,6 +207,33 @@ class UserDataLock internal constructor(
     }
 
     fun lockText(text: String): DataEnvelope = lockBytes(encodeStrictUtf8(text))
+
+    fun lockStream(
+        input: InputStream,
+        output: OutputStream,
+        chunkSize: Int = DEFAULT_STREAM_CHUNK_SIZE,
+        fileId: String? = null,
+        chunkIndex: Int? = null,
+    ): Map<String, Any?> {
+        requireOpenReadKey()
+        keyring.verify()
+        return Stream.lock(
+            keyring.keyId,
+            CryptoCodec.loadPublicWriteKey(keyring.raw, DataLockErrorCode.INVALID_KEYRING),
+            input,
+            output,
+            chunkSize,
+            fileId,
+            chunkIndex,
+        )
+    }
+
+    fun openStream(input: InputStream, output: OutputStream): Map<String, Any?> {
+        val readKey = requireOpenReadKey()
+        keyring.verify()
+        val public = CryptoCodec.loadPublicWriteKey(keyring.raw, DataLockErrorCode.INVALID_KEYRING)
+        return Stream.open(keyring.keyId, readKey, CryptoCodec.publicDer(public), input, output)
+    }
 
     fun lockFile(inputPath: Path, outputPath: Path): DataEnvelope {
         if (Files.size(inputPath) > MAX_V1_FILE_BYTES) {

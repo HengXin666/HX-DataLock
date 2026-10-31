@@ -12,22 +12,22 @@ export function generateAttestationKey() {
   };
 }
 
-export function attestationKeyId(publicSpki) {
+export function attestationKeyId(publicSpki: any) {
   return `ed25519:${sha256Base64Url(publicSpki).slice(0, 22)}`;
 }
 
-export function attestationMessage(envelopeSha256, recipientKeyId, context) {
+export function attestationMessage(envelopeSha256: any, recipientKeyId: any, context: any) {
   if ([envelopeSha256, recipientKeyId, context].some((value) => String(value).includes('\n'))) {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'attestation fields must not contain newlines');
   }
   return Buffer.from(`${ATTESTATION_SCHEMA}\n${envelopeSha256}\n${recipientKeyId}\n${context}\n`, 'utf8');
 }
 
-export function envelopeSha256(envelope) {
+export function envelopeSha256(envelope: any) {
   return sha256Base64Url(Buffer.from(envelope.serialize(), 'utf8'));
 }
 
-export function signEnvelope(privateKey, envelope, context = '') {
+export function signEnvelope(privateKey: any, envelope: any, context = '') {
   if (typeof context !== 'string') {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'attestation context must be a string');
   }
@@ -53,7 +53,7 @@ export function signEnvelope(privateKey, envelope, context = '') {
   };
 }
 
-export function verifyAttestation(attestation, envelope, options: any = {}) {
+export function verifyAttestation(attestation: any, envelope: any, options: any = {}) {
   if (!attestation || attestation.schema !== ATTESTATION_SCHEMA) {
     throw new DataLockError(DataLockErrorCode.INVALID_ATTESTATION, 'attestation schema must be hxdl.attestation.v1');
   }
@@ -89,7 +89,7 @@ export function verifyAttestation(attestation, envelope, options: any = {}) {
   if (!ok) throw new DataLockError(DataLockErrorCode.INVALID_ATTESTATION, 'attestation signature is invalid');
 }
 
-export function signManifest(privateKey, payload, issuer) {
+export function signManifest(privateKey: any, payload: any, issuer: any) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'manifest payload must be an object');
   }
@@ -110,7 +110,7 @@ export function signManifest(privateKey, payload, issuer) {
   };
 }
 
-export function verifySignedManifest(document, options: any = {}) {
+export function verifySignedManifest(document: any, options: any = {}) {
   if (!document || document.schema !== SIGNED_MANIFEST_V2_SCHEMA) {
     throw new DataLockError(DataLockErrorCode.INVALID_ATTESTATION, 'signed manifest schema must be hxdl.signedManifest.v2');
   }
@@ -134,6 +134,6 @@ export function verifySignedManifest(document, options: any = {}) {
   return document.payload;
 }
 
-export function loadAttestationPrivateKey(pkcs8) {
+export function loadAttestationPrivateKey(pkcs8: any) {
   return createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
 }

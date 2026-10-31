@@ -15,7 +15,7 @@ import { b64, fromB64, sha256Base64Url } from './crypto-codec.js';
 
 const STREAM_MAGIC = Buffer.from('HXDL');
 
-function requireChunkSize(chunkSize) {
+function requireChunkSize(chunkSize: any) {
   if (!Number.isInteger(chunkSize) || chunkSize < MIN_STREAM_CHUNK_SIZE || chunkSize > MAX_STREAM_CHUNK_SIZE) {
     throw new DataLockError(
       DataLockErrorCode.INVALID_ARGUMENT,
@@ -25,14 +25,14 @@ function requireChunkSize(chunkSize) {
   return chunkSize;
 }
 
-export function streamNonce(index, isLast) {
+export function streamNonce(index: any, isLast: any) {
   const nonce = Buffer.alloc(12);
   nonce.writeBigUInt64BE(BigInt(index), 0);
   nonce[11] = isLast ? 1 : 0;
   return nonce;
 }
 
-function streamAad(keyId, chunkSize, index, isLast, headerSha) {
+function streamAad(keyId: any, chunkSize: any, index: any, isLast: any, headerSha: any) {
   const flag = isLast ? '1' : '0';
   return Buffer.from(
     `${STREAM_SCHEMA}:${keyId}:X25519:HKDF-SHA256:AES-256-GCM:${chunkSize}:${index}:${flag}:${headerSha}`,
@@ -40,7 +40,7 @@ function streamAad(keyId, chunkSize, index, isLast, headerSha) {
   );
 }
 
-function contentKey(sharedSecret, hkdfSalt, keyId, recipientSpki) {
+function contentKey(sharedSecret: any, hkdfSalt: any, keyId: any, recipientSpki: any) {
   const info = Buffer.concat([
     Buffer.from(`hxdl.stream.v1:${keyId}:`, 'utf8'),
     createHash('sha256').update(recipientSpki).digest(),
@@ -48,13 +48,13 @@ function contentKey(sharedSecret, hkdfSalt, keyId, recipientSpki) {
   return Buffer.from(hkdfSync('sha256', sharedSecret, hkdfSalt, info, KEY_LENGTH));
 }
 
-function sealChunk(key, nonce, plaintext, aad) {
+function sealChunk(key: any, nonce: any, plaintext: any, aad: any) {
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(aad);
   return Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
 }
 
-function openChunk(key, nonce, body, aad) {
+function openChunk(key: any, nonce: any, body: any, aad: any) {
   const tag = body.subarray(body.length - 16);
   const ciphertext = body.subarray(0, body.length - 16);
   const decipher = createDecipheriv('aes-256-gcm', key, nonce);
@@ -63,7 +63,7 @@ function openChunk(key, nonce, body, aad) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
-function readExact(src, size, what) {
+function readExact(src: any, size: any, what: any) {
   const data = src.read(size);
   if (!data || data.length !== size) {
     throw new DataLockError(DataLockErrorCode.TAMPERED_STREAM, `stream ended inside ${what}`);
@@ -71,8 +71,8 @@ function readExact(src, size, what) {
   return data;
 }
 
-export function lockStreamBytes({ keyId, publicKey, plaintext, chunkSize = DEFAULT_STREAM_CHUNK_SIZE, fileId = undefined, chunkIndex = undefined }) {
-  const src = { offset: 0, read(n) {
+export function lockStreamBytes({ keyId, publicKey, plaintext, chunkSize = DEFAULT_STREAM_CHUNK_SIZE, fileId = undefined, chunkIndex = undefined }: any) {
+  const src = { offset: 0, read(n: any) {
     const slice = plaintext.subarray(this.offset, this.offset + n);
     this.offset += slice.length;
     return Buffer.from(slice);
@@ -82,7 +82,7 @@ export function lockStreamBytes({ keyId, publicKey, plaintext, chunkSize = DEFAU
     keyId,
     publicKey,
     src,
-    dst: { write(buf) { parts.push(Buffer.from(buf)); } },
+    dst: { write(buf: any) { parts.push(Buffer.from(buf)); } },
     chunkSize,
     fileId,
     chunkIndex,
@@ -90,7 +90,7 @@ export function lockStreamBytes({ keyId, publicKey, plaintext, chunkSize = DEFAU
   return { bytes: Buffer.concat(parts), info };
 }
 
-export function lockStream({ keyId, publicKey, src, dst, chunkSize = DEFAULT_STREAM_CHUNK_SIZE, fileId = undefined, chunkIndex = undefined }) {
+export function lockStream({ keyId, publicKey, src, dst, chunkSize = DEFAULT_STREAM_CHUNK_SIZE, fileId = undefined, chunkIndex = undefined }: any) {
   chunkSize = requireChunkSize(chunkSize);
   const recipientSpki = publicKey.export({ format: 'der', type: 'spki' });
   const ephemeral = generateKeyPairSync('x25519');
@@ -123,7 +123,7 @@ export function lockStream({ keyId, publicKey, src, dst, chunkSize = DEFAULT_STR
   let index = 0;
   let total = 0;
   let previous = readChunk(src, chunkSize);
-  const writeOne = (plaintext, isLast) => {
+  const writeOne = (plaintext: any, isLast: any) => {
     const body = sealChunk(key, streamNonce(index, isLast), plaintext, streamAad(keyId, chunkSize, index, isLast, headerSha));
     dst.write(Buffer.from([isLast ? 1 : 0]));
     const bodyLen = Buffer.alloc(4);
@@ -161,7 +161,7 @@ export function lockStream({ keyId, publicKey, src, dst, chunkSize = DEFAULT_STR
   };
 }
 
-function readChunk(src, chunkSize) {
+function readChunk(src: any, chunkSize: any) {
   const block = src.read(chunkSize);
   if (block == null) return Buffer.alloc(0);
   if (typeof block === 'string') {
@@ -170,7 +170,7 @@ function readChunk(src, chunkSize) {
   return Buffer.from(block);
 }
 
-export function openStream({ keyId, readKey, recipientSpki, src, dst }) {
+export function openStream({ keyId, readKey, recipientSpki, src, dst }: any) {
   const magic = readExact(src, 4, 'stream magic');
   if (!magic.equals(STREAM_MAGIC)) {
     throw new DataLockError(DataLockErrorCode.TAMPERED_STREAM, 'stream magic does not match hxdl.stream.v1');
@@ -261,19 +261,19 @@ export function openStream({ keyId, readKey, recipientSpki, src, dst }) {
   };
 }
 
-export function changedChunkIndexes(previous, current) {
+export function changedChunkIndexes(previous: any, current: any) {
   validateManifest(previous);
   validateManifest(current);
   if (previous.fileId !== current.fileId) {
     throw new DataLockError(DataLockErrorCode.INVALID_MANIFEST, 'manifests belong to different files');
   }
-  const previousPlain = new Map(previous.chunks.map((entry) => [entry.index, entry.plaintextSha256]));
+  const previousPlain = new Map(previous.chunks.map((entry: any) => [entry.index, entry.plaintextSha256]));
   return current.chunks
-    .filter((entry) => previousPlain.get(entry.index) !== entry.plaintextSha256)
-    .map((entry) => entry.index);
+    .filter((entry: any) => previousPlain.get(entry.index) !== entry.plaintextSha256)
+    .map((entry: any) => entry.index);
 }
 
-function validateManifest(manifest) {
+function validateManifest(manifest: any) {
   if (!manifest || manifest.schema !== MANIFEST_SCHEMA) {
     throw new DataLockError(DataLockErrorCode.INVALID_MANIFEST, 'manifest schema must be hxdl.manifest.v1');
   }
@@ -283,7 +283,7 @@ function validateManifest(manifest) {
   if (!Array.isArray(manifest.chunks) || manifest.chunks.length === 0) {
     throw new DataLockError(DataLockErrorCode.INVALID_MANIFEST, 'manifest must list at least one chunk');
   }
-  manifest.chunks.forEach((entry, expected) => {
+  manifest.chunks.forEach((entry: any, expected: any) => {
     if (!entry || entry.index !== expected) {
       throw new DataLockError(DataLockErrorCode.INVALID_MANIFEST, 'manifest chunk indexes must be contiguous from 0');
     }

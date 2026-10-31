@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { MAX_ENVELOPE_JSON_BYTES } from './constants.js';
 import { DataLockError, DataLockErrorCode } from './errors.js';
 
-export function readJson(path, maxBytes = MAX_ENVELOPE_JSON_BYTES) {
+export function readJson(path: any, maxBytes = MAX_ENVELOPE_JSON_BYTES) {
   if (statSync(path).size > maxBytes) {
     throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'JSON document exceeds the v1 size limit');
   }
@@ -14,7 +14,7 @@ export function readJson(path, maxBytes = MAX_ENVELOPE_JSON_BYTES) {
   return raw;
 }
 
-export function writeJson(path, value) {
+export function writeJson(path: any, value: any) {
   mkdirSync(dirname(resolve(path)), { recursive: true });
   // writeFileSync only applies mode at creation, so an existing file with looser
   // permissions would keep them. Converge explicitly.
@@ -22,6 +22,6 @@ export function writeJson(path, value) {
   if (process.platform !== 'win32') chmodSync(path, 0o600);
 }
 
-export function isStableJson(path, value) {
+export function isStableJson(path: any, value: any) {
   return readFileSync(path, 'utf8') === `${JSON.stringify(value, null, 2)}\n`;
 }

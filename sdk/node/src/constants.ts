@@ -14,8 +14,11 @@ export const DEFAULT_SCRYPT_N = 2 ** 18;
 export const DEFAULT_SCRYPT_R = 8;
 export const DEFAULT_SCRYPT_P = 1;
 export const KEY_LENGTH = 32;
+// Readers still accept Keyrings created at the historical floor. New Keyrings
+// must use MIN_CREATE_SCRYPT_N unless the caller opts into a lower N.
 export const MIN_SCRYPT_N = 2 ** 14;
-export const RECOMMENDED_MIN_SCRYPT_N = 2 ** 17;
+export const MIN_CREATE_SCRYPT_N = 2 ** 17;
+export const RECOMMENDED_MIN_SCRYPT_N = MIN_CREATE_SCRYPT_N;
 export const PRIVATE_MIN_GUESSES_LOG10 = 14;
 export const PUBLIC_MIN_GUESSES_LOG10 = 24.082399653118497;
 export const MAX_SCRYPT_N = 2 ** 20;

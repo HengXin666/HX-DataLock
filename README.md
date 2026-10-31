@@ -114,9 +114,13 @@ HX-DataLock 是 Crypto Codec。应用仍然需要自己处理 Master Password �
 
 HX-DataLock 不把密码尝试锁定当作离线安全控制: 一旦 Keyring 被复制, 攻击者可以脱离服务端限制进行猜测。真正有效的防线是高熵 Master Password、scrypt 成本和尽量减少 Master Password 驻留。
 
-## Keyring Check
+## Keyring 必须保持私有
 
-`.github/workflows/keyring-check.yml` 会在仓库提交了 `keyring.hxdl.json` 时用 CLI 校验它的 v1 结构，并扫描明显的原始私钥标记。如果仓库没有提交 `keyring.hxdl.json`，workflow 会明确输出 skipped；这只表示没有 Keyring 可校验，不表示已经验证过某个 Keyring。当前仓库不要求提交 Keyring。
+Keyring 含有被 Master Password 包裹的 Read Key。它只能留在私有本地存储。公共 GitHub、GitHub Actions 和其他公共或自动化环境只能接收 Public Key Document。
+
+`.github/workflows/keyring-private.yml` 在每次 push 和 pull request 上运行。仓库里如果出现 Keyring 文档（`*keyring*.hxdl.json`，或 JSON 中的 `hxdl.keyring.v1`），公开仓库会失败；私有或 internal 仓库只发出警告。看不出可见性时同样失败。没有提交 Keyring 时检查成功，并说明没有 Keyring 被校验。
+
+`.github/workflows/keyring-check.yml` 仍会在根目录存在 `keyring.hxdl.json` 时做 v1 结构校验，并扫描明显的原始私钥标记。公开仓库会在结构校验之前被上面的私有性检查拦住。没有提交根目录 Keyring 时，结构校验明确输出 skipped；这只表示没有那份文件，不表示已经验证过某个 Keyring。当前仓库不要求、也不应该提交 Keyring。
 
 ## Signed Manifests
 

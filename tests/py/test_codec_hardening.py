@@ -30,25 +30,25 @@ PASSWORD = "correct horse battery staple for hx datalock"
 
 
 def test_wrong_option_key_is_not_a_password_error() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     with pytest.raises(DataLockError) as exc_info:
         makeUserDataLock(keyring, {"master_password": PASSWORD})
     assert exc_info.value.code is DataLockErrorCode.INVALID_ARGUMENT
 
 
 def test_lock_bytes_accepts_bytearray_and_rejects_str() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = make_user_data_lock(keyring, PASSWORD)
     envelope = user.lockBytes(bytearray(b"bytes-like"))
     assert user.openBytes(envelope) == b"bytes-like"
-    sender = makeSenderDataLock(export_public_key_document(keyring))
+    sender = makeSenderDataLock(export_public_key_document(keyring), allow_unpinned_public_key=True)
     with pytest.raises(DataLockError) as exc_info:
         sender.lockBytes("not-bytes")  # type: ignore[arg-type]
     assert exc_info.value.code is DataLockErrorCode.INVALID_ARGUMENT
 
 
 def test_closed_datalock_has_its_own_code() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     with make_user_data_lock(keyring, PASSWORD) as user:
         envelope = user.lockBytes(b"inside")
     with pytest.raises(DataLockError) as exc_info:
@@ -57,7 +57,7 @@ def test_closed_datalock_has_its_own_code() -> None:
 
 
 def test_parse_and_inspect_do_not_decrypt() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = make_user_data_lock(keyring, PASSWORD)
     envelope = user.lockText("metadata")
     parsed = DataEnvelope.parse(envelope.serialize())
@@ -68,7 +68,7 @@ def test_parse_and_inspect_do_not_decrypt() -> None:
 
 
 def test_open_decodes_ciphertext_once(monkeypatch) -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = make_user_data_lock(keyring, PASSWORD)
     envelope = user.lockBytes(b"x" * 4096)
     calls = {"n": 0}
@@ -85,7 +85,7 @@ def test_open_decodes_ciphertext_once(monkeypatch) -> None:
 
 
 def test_rewrap_keeps_existing_envelopes_openable() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = make_user_data_lock(keyring, PASSWORD)
     envelope = user.lockBytes(b"still mine")
     new_password = f"{PASSWORD} rotated"
@@ -101,7 +101,7 @@ def test_public_keyring_requires_high_entropy() -> None:
     report = check_password_strength(PASSWORD)
     assert report["allowedForPublicKeyring"] is True
     with pytest.raises(DataLockError) as exc_info:
-        create_keyring("password", scrypt_n=16384, allow_weak=True, public_keyring=True)
+        create_keyring("password", scrypt_n=16384, allow_weak=True, allow_low_scrypt_n=True, public_keyring=True)
     assert exc_info.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
 
 
@@ -112,8 +112,8 @@ def test_invalid_scrypt_n_uses_stable_code() -> None:
 
 
 def test_stream_round_trip_and_rejects_truncation_and_reorder() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
-    sender = makeSenderDataLock(export_public_key_document(keyring))
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    sender = makeSenderDataLock(export_public_key_document(keyring), allow_unpinned_public_key=True)
     user = make_user_data_lock(keyring, PASSWORD)
     payload = b"abcdefghij" * 50
     sealed = io.BytesIO()
@@ -136,7 +136,7 @@ def test_stream_round_trip_and_rejects_truncation_and_reorder() -> None:
 
 
 def test_manifest_incremental_reports_only_changed_chunks() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     public = keyring.public_write_key
     key_id = keyring.key_id
     first, chunks_a = seal_chunked(
@@ -177,7 +177,7 @@ def test_manifest_incremental_reports_only_changed_chunks() -> None:
 
 
 def test_ed25519_attestation_and_signed_manifest() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = make_user_data_lock(keyring, PASSWORD)
     envelope = user.lockBytes(b"signed")
     private_key, _public = generate_attestation_key()

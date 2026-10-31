@@ -6,8 +6,8 @@ from hx_datalock import open_file
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="使用主密码和 GitHub Keyring 解密消息")
-    parser.add_argument("--keyring", default="keyring.hxdl.json", help="GitHub 仓库中的 Keyring")
+    parser = argparse.ArgumentParser(description="使用主密码和私有本地 Keyring 解密消息")
+    parser.add_argument("--keyring", default="keyring.hxdl.json", help="私有本地 Keyring，不要提交到公共 GitHub 或公共存储")
     parser.add_argument("--in", dest="input_path", required=True, help="Data Envelope 密文")
     parser.add_argument("--out", dest="output_path", required=True, help="输出明文文件")
     parser.add_argument(

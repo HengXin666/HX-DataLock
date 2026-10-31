@@ -10,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .constants import RECOMMENDED_MIN_SCRYPT_N
+from .constants import MIN_CREATE_SCRYPT_N
 from .sdk import (
     DEFAULT_SCRYPT_N,
     DataLockError,
@@ -88,9 +88,10 @@ def _cmd_init(args: argparse.Namespace) -> None:
         print(password, file=sys.stderr)
     else:
         password = _read_password(args.password_env, confirm=True, password_stdin=args.password_stdin)
-    if args.scrypt_n < RECOMMENDED_MIN_SCRYPT_N:
+    if args.scrypt_n < MIN_CREATE_SCRYPT_N and not args.allow_low_scrypt_n:
         print(
-            f"warning: scrypt N={args.scrypt_n} is below the recommended {RECOMMENDED_MIN_SCRYPT_N}",
+            f"warning: scrypt N={args.scrypt_n} is below the create-time minimum {MIN_CREATE_SCRYPT_N} "
+            "and will be rejected unless --allow-low-scrypt-n is set",
             file=sys.stderr,
         )
     keyring = init_keyring(
@@ -98,25 +99,31 @@ def _cmd_init(args: argparse.Namespace) -> None:
         password,
         scrypt_n=args.scrypt_n,
         on_password_report=_report_password_strength,
-        allow_weak=args.allow_weak,
+        allow_weak_password=args.allow_weak_password,
+        allow_low_scrypt_n=args.allow_low_scrypt_n,
         public_keyring=args.public_keyring,
     )
     print(f"Keyring written: {args.keyring}")
     print(f"Write Key ID: {keyring.key_id}")
-    print("Keyring storage: private local file. Publish the Public Key Document, not this file.")
+    print(
+        "Keep this Keyring on private local storage. "
+        "Do not commit it to public GitHub or other public storage. "
+        "Publish a Public Key Document for senders."
+    )
 
 
 def _cmd_lock(args: argparse.Namespace) -> None:
     document = PublicKeyDocument.read(args.public)
-    if not args.expect_key_id and not args.allow_unpinned_key:
+    allow_unpinned = args.allow_unpinned_public_key or args.allow_unpinned_key
+    if not args.expect_key_id and not allow_unpinned:
         _fail(
             DataLockErrorCode.UNPINNED_PUBLIC_KEY.value,
-            "lock requires --expect-key-id. Pass --allow-unpinned-key only if you accept a replaced Public Key Document.",
+            "lock requires --expect-key-id. Pass --allow-unpinned-public-key only if you accept a replaced Public Key Document.",
         )
     sender = makeSenderDataLock(
         document,
         expected_key_id=args.expect_key_id,
-        require_expected_key_id=not args.allow_unpinned_key,
+        allow_unpinned_public_key=allow_unpinned,
     )
     sender.lockFile(args.input, args.output)
     print(f"Data Envelope written: {args.output}")
@@ -206,12 +213,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    init = subcommands.add_parser("init", help="create a private local Keyring")
+    init = subcommands.add_parser(
+        "init",
+        help="create a private local Keyring (never publish it to public GitHub or other public storage)",
+    )
     init.add_argument("--keyring", default="keyring.hxdl.json")
     init.add_argument("--password-env")
     init.add_argument("--password-stdin", action="store_true", help="read the Master Password from one stdin line")
     init.add_argument("--scrypt-n", type=int, default=DEFAULT_SCRYPT_N)
-    init.add_argument("--allow-weak", action="store_true", help="create a Keyring even when the strength report rejects the password")
+    init.add_argument(
+        "--allow-weak-password",
+        "--allow-weak",
+        action="store_true",
+        help="create a Keyring even when the Master Password is weak",
+    )
+    init.add_argument(
+        "--allow-low-scrypt-n",
+        action="store_true",
+        help="allow scrypt N below the create-time floor; readers still open older Keyrings",
+    )
     init.add_argument(
         "--public-keyring",
         action="store_true",
@@ -222,8 +242,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     lock = subcommands.add_parser("lock", help="lock a local file with a Public Key Document")
     lock.add_argument("--public", required=True)
-    lock.add_argument("--expect-key-id", help="required unless --allow-unpinned-key is set")
-    lock.add_argument("--allow-unpinned-key", action="store_true")
+    lock.add_argument("--expect-key-id", help="recipient keyId the Public Key Document must match")
+    lock.add_argument(
+        "--allow-unpinned-public-key",
+        action="store_true",
+        help="lock without pinning the recipient keyId (unsafe if the Public Key Document can be replaced)",
+    )
+    lock.add_argument(
+        "--allow-unpinned-key",
+        action="store_true",
+        help="alias of --allow-unpinned-public-key",
+    )
     lock.add_argument("--in", dest="input", required=True)
     lock.add_argument("--out", dest="output", required=True)
     lock.set_defaults(func=_cmd_lock)

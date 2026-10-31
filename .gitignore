@@ -9,6 +9,9 @@ node_modules/
 sdk/node/dist/
 sdk/node/*.tgz
 
+# Keyrings hold a password-wrapped Read Key. Keep them on private local storage.
+*keyring*.hxdl.json
+
 # 爆破审计的中间产物与目标 keyring (含已知明文口令, 永不入库)
 .scratch/crack-audit/targets/
 .scratch/crack-audit/targets_fast/
@@ -18,3 +21,5 @@ sdk/node/*.tgz
 shard-*.json
 sdk/kotlin/.gradle/
 sdk/kotlin/build/
+sdk/kotlin/android/build/
+sdk/kotlin/android/.gradle/

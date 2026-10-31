@@ -23,7 +23,7 @@ import {
 const X25519_SPKI_MAX_BYTES = 512;
 const WRAPPED_READ_KEY_MAX_BYTES = 4096;
 
-export function b64(buffer) {
+export function b64(buffer: any) {
   return Buffer.from(buffer).toString('base64');
 }
 
@@ -40,7 +40,7 @@ function maxB64Chars(maxBytes: number) {
  * v1 file helper above ~3.2 MB threw inside the regex instead of round-tripping.
  * A linear scan has no such ceiling and matches the same language.
  */
-export function fromB64(text, field, code: string = DataLockErrorCode.INVALID_KEYRING, options: any = {}) {
+export function fromB64(text: any, field: any, code: string = DataLockErrorCode.INVALID_KEYRING, options: any = {}) {
   // Round-trip through Node's decoder instead of scanning every character in
   // JavaScript. A 25 MB ciphertext made the character loop the open path.
   if (typeof text !== 'string' || text.length === 0 || Buffer.from(text, 'base64').toString('base64') !== text) {
@@ -62,7 +62,7 @@ export function fromB64(text, field, code: string = DataLockErrorCode.INVALID_KE
   return decoded;
 }
 
-export function sha256Base64Url(buffer) {
+export function sha256Base64Url(buffer: any) {
   return createHash('sha256').update(buffer).digest('base64url');
 }
 
@@ -70,15 +70,15 @@ export function utcNow() {
   return new Date().toISOString();
 }
 
-export function aadForKeyring(keyId) {
+export function aadForKeyring(keyId: any) {
   return Buffer.from(`${KEYRING_SCHEMA}:${keyId}:scrypt:AES-256-GCM`, 'utf8');
 }
 
-export function aadForEnvelope(keyId, alg = ENVELOPE_ALG) {
+export function aadForEnvelope(keyId: any, alg = ENVELOPE_ALG) {
   return Buffer.from(`${ENVELOPE_SCHEMA}:${keyId}:${alg.kem}:${alg.kdf}:${alg.aead}`, 'utf8');
 }
 
-export function requireEnvelopeAlg(raw) {
+export function requireEnvelopeAlg(raw: any) {
   // The declared algorithm object must be exactly the v1 triple. Checking only
   // the three known keys would let a document carry extra fields and still be
   // accepted here, while the AAD is built from whatever object was supplied:
@@ -100,7 +100,7 @@ export function requireEnvelopeAlg(raw) {
   }
 }
 
-export function derivePasswordKey(password, kdf) {
+export function derivePasswordKey(password: any, kdf: any) {
   validateScryptParams(kdf);
   return scryptSync(Buffer.from(password.normalize('NFC'), 'utf8'), fromB64(kdf.salt, 'encryptedReadKey.kdf.salt', DataLockErrorCode.INVALID_KEYRING, { exactLength: 32 }), kdf.keyLength, {
     N: kdf.N,
@@ -110,7 +110,7 @@ export function derivePasswordKey(password, kdf) {
   });
 }
 
-export function encryptAesGcm(key, plaintext, aad) {
+export function encryptAesGcm(key: any, plaintext: any, aad: any) {
   const nonce = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(aad);
@@ -118,7 +118,7 @@ export function encryptAesGcm(key, plaintext, aad) {
   return { nonce, ciphertext, tag: cipher.getAuthTag() };
 }
 
-export function decryptAesGcm(key, sealed, aad, code) {
+export function decryptAesGcm(key: any, sealed: any, aad: any, code: any) {
   try {
     const decipher = createDecipheriv('aes-256-gcm', key, sealed.nonce);
     decipher.setAAD(aad);
@@ -129,7 +129,7 @@ export function decryptAesGcm(key, sealed, aad, code) {
   }
 }
 
-export function validateScryptN(value) {
+export function validateScryptN(value: any) {
   if (!Number.isInteger(value) || value < MIN_SCRYPT_N || value > MAX_SCRYPT_N || (value & (value - 1)) !== 0) {
     throw new DataLockError(
       DataLockErrorCode.INVALID_SCRYPT_PARAMS,
@@ -138,7 +138,7 @@ export function validateScryptN(value) {
   }
 }
 
-function requireInt(raw, field, code) {
+function requireInt(raw: any, field: any, code: any) {
   const value = raw?.[field];
   if (!Number.isInteger(value)) {
     throw new DataLockError(code, `Invalid scrypt parameter: ${field}`);
@@ -146,7 +146,7 @@ function requireInt(raw, field, code) {
   return value;
 }
 
-export function validateScryptParams(kdf, code = DataLockErrorCode.INVALID_KEYRING) {
+export function validateScryptParams(kdf: any, code = DataLockErrorCode.INVALID_KEYRING) {
   if (!kdf || typeof kdf !== 'object' || kdf.name !== 'scrypt') {
     throw new DataLockError(
       DataLockErrorCode.UNSUPPORTED_ALGORITHM,
@@ -172,7 +172,7 @@ export function validateScryptParams(kdf, code = DataLockErrorCode.INVALID_KEYRI
   fromB64(kdf.salt, 'encryptedReadKey.kdf.salt', code, { exactLength: 32 });
 }
 
-export function validateKeyringEncryptedReadKey(encrypted) {
+export function validateKeyringEncryptedReadKey(encrypted: any) {
   if (!encrypted || typeof encrypted !== 'object') {
     throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Keyring must contain encrypted Read Key');
   }
@@ -199,14 +199,14 @@ const CREATION_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
  * trivially forgeable. This does not authenticate it; it makes it well-formed
  * and comparable across SDKs.
  */
-export function requireCreationTime(raw, code: string) {
+export function requireCreationTime(raw: any, code: string) {
   const value = raw?.createdAt;
   if (typeof value !== 'string' || !CREATION_TIME_PATTERN.test(value)) {
     throw new DataLockError(code, 'Creation Time must be an ISO-8601 UTC timestamp with millisecond precision');
   }
 }
 
-export function validateEnvelopeFields(raw) {
+export function validateEnvelopeFields(raw: any) {
   if (typeof raw?.recipientKeyId !== 'string' || raw.recipientKeyId.length === 0) {
     throw new DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, 'Data Envelope must contain recipientKeyId');
   }
@@ -228,7 +228,7 @@ export function validateEnvelopeFields(raw) {
   return { ephemeralPublicKey, hkdfSalt, nonce, tag, ciphertext };
 }
 
-export function validatePublicWriteKey(raw, code) {
+export function validatePublicWriteKey(raw: any, code: any) {
   if (!raw?.publicWriteKey || typeof raw.publicWriteKey !== 'object') {
     throw new DataLockError(code, 'Document must contain a public Write Key');
   }

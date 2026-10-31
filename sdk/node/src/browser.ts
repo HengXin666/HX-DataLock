@@ -184,7 +184,7 @@ export async function createKeyring(masterPassword: string, options: Record<stri
   };
 }
 
-export function exportPublicKeyDocument(keyring) {
+export function exportPublicKeyDocument(keyring: any) {
   return {
     schema: PUBLIC_KEY_SCHEMA,
     createdAt: utcNow(),
@@ -201,7 +201,7 @@ function asBytes(payload: Uint8Array | ArrayBuffer): Uint8Array {
   throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'lockBytes requires Uint8Array');
 }
 
-export async function lockBytes(publicKeyDocument, payload: Uint8Array) {
+export async function lockBytes(publicKeyDocument: any, payload: Uint8Array) {
   const bytes = asBytes(payload);
   if (bytes.length > MAX_V1_FILE_BYTES) {
     throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support payloads up to 25 MB');
@@ -232,12 +232,12 @@ export async function lockBytes(publicKeyDocument, payload: Uint8Array) {
   };
 }
 
-export async function lockText(publicKeyDocument, text: string) {
+export async function lockText(publicKeyDocument: any, text: string) {
   if (typeof text !== 'string') throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'lockText requires text input');
   return lockBytes(publicKeyDocument, textEncoder.encode(text));
 }
 
-async function unwrapReadKey(keyring, masterPassword: string) {
+async function unwrapReadKey(keyring: any, masterPassword: string) {
   const encrypted = keyring.encryptedReadKey;
   const kdf = encrypted.kdf;
   const wrapping = await scrypt(masterPassword, base64ToBytes(kdf.salt), kdf.N, kdf.r, kdf.p);
@@ -257,7 +257,7 @@ async function unwrapReadKey(keyring, masterPassword: string) {
   }
 }
 
-export async function openBytes(keyring, masterPassword: string, envelope) {
+export async function openBytes(keyring: any, masterPassword: string, envelope: any) {
   if (typeof masterPassword !== 'string') {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'masterPassword must be a string');
   }
@@ -282,7 +282,7 @@ export async function openBytes(keyring, masterPassword: string, envelope) {
   );
 }
 
-export async function openText(keyring, masterPassword: string, envelope) {
+export async function openText(keyring: any, masterPassword: string, envelope: any) {
   try {
     return textDecoder.decode(await openBytes(keyring, masterPassword, envelope));
   } catch (error) {
@@ -300,7 +300,7 @@ export function parseEnvelope(text: string) {
   return raw;
 }
 
-export function inspectEnvelope(envelope) {
+export function inspectEnvelope(envelope: any) {
   return {
     schema: envelope.schema,
     recipientKeyId: envelope.recipientKeyId,
@@ -310,11 +310,11 @@ export function inspectEnvelope(envelope) {
   };
 }
 
-export function serializeDocument(raw): string {
+export function serializeDocument(raw: any): string {
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
 
-export async function lockStream(publicKeyDocument, source: ReadableStream<Uint8Array>, options: { chunkSize?: number } = {}) {
+export async function lockStream(publicKeyDocument: any, source: ReadableStream<Uint8Array>, options: { chunkSize?: number } = {}) {
   const chunkSize = options.chunkSize ?? DEFAULT_STREAM_CHUNK_SIZE;
   const write = publicKeyDocument.publicWriteKey;
   const recipientSpki = base64ToBytes(write.spki);
@@ -408,7 +408,7 @@ export async function lockStream(publicKeyDocument, source: ReadableStream<Uint8
   });
 }
 
-export async function signEnvelopeWithKey(privateKey: CryptoKey, publicKey: CryptoKey, envelope, context = '') {
+export async function signEnvelopeWithKey(privateKey: CryptoKey, publicKey: CryptoKey, envelope: any, context = '') {
   const digest = sha256Base64Url(await sha256(textEncoder.encode(serializeDocument(envelope))));
   const message = textEncoder.encode(`${ATTESTATION_SCHEMA}\n${digest}\n${envelope.recipientKeyId}\n${context}\n`);
   const signature = new Uint8Array(await subtle().sign({ name: 'Ed25519' }, privateKey, message as BufferSource));

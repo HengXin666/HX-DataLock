@@ -4,7 +4,7 @@ import { createKeyring, makeUserDataLock } from '../sdk/node/dist/index.js';
 const password = 'correct horse battery staple for hx datalock';
 const sizes = process.argv.slice(2).map(Number);
 const chosen = sizes.length ? sizes : [64 * 1024, 256 * 1024];
-const keyring = createKeyring(password, { scryptN: 16384 });
+const keyring = createKeyring(password, { scryptN: 16384, allowLowScryptN: true });
 const user = makeUserDataLock(keyring, { masterPassword: password });
 
 function median(samples) {

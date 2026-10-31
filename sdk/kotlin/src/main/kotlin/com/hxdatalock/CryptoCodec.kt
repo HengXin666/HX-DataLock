@@ -350,7 +350,7 @@ internal object CryptoCodec {
     private fun envelopeAad(keyId: String, alg: Map<String, String>): ByteArray =
         "$ENVELOPE_SCHEMA:$keyId:${alg["kem"]}:${alg["kdf"]}:${alg["aead"]}".toByteArray(Charsets.UTF_8)
 
-    private fun exchange(privateKey: X25519PrivateKeyParameters, publicKey: X25519PublicKeyParameters): ByteArray {
+    internal fun exchange(privateKey: X25519PrivateKeyParameters, publicKey: X25519PublicKeyParameters): ByteArray {
         val agreement = X25519Agreement()
         val secret = ByteArray(agreement.agreementSize)
         agreement.init(privateKey)
@@ -358,7 +358,7 @@ internal object CryptoCodec {
         return secret
     }
 
-    private fun hkdf(secret: ByteArray, salt: ByteArray, info: ByteArray): ByteArray {
+    internal fun hkdf(secret: ByteArray, salt: ByteArray, info: ByteArray): ByteArray {
         val generator = HKDFBytesGenerator(SHA256Digest())
         val out = ByteArray(KEY_LENGTH)
         generator.init(HKDFParameters(secret, salt, info))
@@ -366,9 +366,9 @@ internal object CryptoCodec {
         return out
     }
 
-    private data class Sealed(val ciphertext: ByteArray, val tag: ByteArray)
+    internal data class Sealed(val ciphertext: ByteArray, val tag: ByteArray)
 
-    private fun aesGcmEncrypt(key: ByteArray, nonce: ByteArray, plaintext: ByteArray, aad: ByteArray): Sealed {
+    internal fun aesGcmEncrypt(key: ByteArray, nonce: ByteArray, plaintext: ByteArray, aad: ByteArray): Sealed {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad)
@@ -376,7 +376,7 @@ internal object CryptoCodec {
         return Sealed(out.copyOfRange(0, out.size - 16), out.copyOfRange(out.size - 16, out.size))
     }
 
-    private fun aesGcmDecrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, tag: ByteArray, aad: ByteArray): ByteArray {
+    internal fun aesGcmDecrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, tag: ByteArray, aad: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad)

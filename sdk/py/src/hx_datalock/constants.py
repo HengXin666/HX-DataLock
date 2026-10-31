@@ -20,10 +20,11 @@ DEFAULT_SCRYPT_R = 8
 DEFAULT_SCRYPT_P = 1
 KEY_LENGTH = 32
 
+# Readers still accept Keyrings created at the historical floor. New Keyrings
+# must use MIN_CREATE_SCRYPT_N unless the caller opts into a lower N.
 MIN_SCRYPT_N = 2**14
-# New Keyrings should use at least 2^17. 2^14 remains readable so existing
-# test and historical Keyrings still open. See ADR 0026.
-RECOMMENDED_MIN_SCRYPT_N = 2**17
+MIN_CREATE_SCRYPT_N = 2**17
+RECOMMENDED_MIN_SCRYPT_N = MIN_CREATE_SCRYPT_N
 MAX_SCRYPT_N = 2**20
 MAX_SCRYPT_R = 16
 MAX_SCRYPT_P = 4

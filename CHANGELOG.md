@@ -26,8 +26,12 @@
 - The npm package is public. `exports` selects the browser build or the Node build. `npm run build` also writes `dist/browser.bundle.js`.
 - `bench/bench_py.py` and `bench/bench_node.mjs` time small payloads with a warmup and a median.
 
-### Not in this change
+### After merging main
 
-- Kotlin does not implement the stream format yet.
-- There is no Android AAR and no Swift SDK.
-- New Keyrings may still use scrypt `N` as low as `2^14`. The CLI warns below `2^17`. Raising the floor for newly created Keyrings is a follow-up so existing test and historical Keyrings keep opening.
+- New Keyrings with scrypt `N < 2^17` fail with `INSECURE_SCRYPT_PARAMETERS` unless `allow_low_scrypt_n` / `allowLowScryptN` / `--allow-low-scrypt-n` is set. Readers still open older Keyrings down to `2^14`. Out-of-window parameters stay `INVALID_SCRYPT_PARAMS`.
+- Sender creation requires a pinned key id unless `allow_unpinned_public_key` is set. CLI accepts that flag and the older `--allow-unpinned-key` alias.
+- Kotlin `checkPasswordStrength` uses zxcvbn with the same score and entropy floors as Python and TypeScript.
+- Kotlin `lockStream` / `openStream` speak `hxdl.stream.v1`.
+- `sdk/kotlin/android` builds an API-26 AAR (`:android:assembleRelease`) from the same sources.
+- TypeScript `noImplicitAny` is on. Public error and `createKeyring` passwords are typed as `string`; many internal Node crypto parameters are explicit `any`.
+- No Swift SDK. This environment has no Swift toolchain, so none was stubbed in.

@@ -1,6 +1,6 @@
 # HX-DataLock
 
-HX-DataLock is a general-purpose encryption context for separating data writing from data reading. It treats public storage as hostile. A Keyring is a private local document. The Public Key Document is the only key material meant to be published.
+HX-DataLock is a general-purpose encryption context for separating data writing from data reading. It treats public storage as hostile. A Keyring stays on private local storage. Public storage may hold Data Envelopes and Public Key Documents. Publishing a Keyring is an explicit warned exception that demands about 80 bits of estimated entropy.
 
 ## Language
 
@@ -9,11 +9,11 @@ A strict Unicode secret memorized by the user and used locally to unwrap the Rea
 _Avoid_: Login password, account password
 
 **Password Strength Policy**:
-A local zxcvbn-style check that rejects a weak Master Password before a Keyring is created or rewrapped. An explicit allow-weak override exists for tests and migration. A Keyring created for public storage also requires about 80 bits of estimated entropy, and that floor cannot be skipped.
+A local zxcvbn-style check that rejects a weak Master Password before a Keyring is created or rewrapped unless the caller explicitly opts in. A Keyring created for public storage also requires about 80 bits of estimated entropy, and that floor cannot be skipped. Opening an existing Keyring does not re-run the policy.
 _Avoid_: Password rule, length check
 
 **Password Strength Report**:
-A structured result from the Password Strength Policy containing a strength level, a zxcvbn score, an entropy estimate, warnings, and suggestions. Callers see it before key material is derived.
+A structured result from the Password Strength Policy containing a strength level, a zxcvbn score, an entropy estimate, warnings, suggestions, and whether creation is allowed. Callers see it before key material is derived.
 _Avoid_: Password valid flag, password score only
 
 **Secret Residency Policy**:
@@ -65,8 +65,8 @@ The private recipient key that can decrypt Data Envelopes after it is unwrapped 
 _Avoid_: Private key, decrypt key
 
 **Keyring**:
-A private local document containing the Write Key and the Read Key encrypted under a key derived from the Master Password. It is not a Public Key Document and is not meant to be committed or published. Publishing one is an explicit, warned exception that demands a high-entropy Master Password.
-_Avoid_: GitHub-stored keyring, public key file, secret file
+A private local document containing the Write Key and the Read Key encrypted under a key derived from the Master Password. Senders receive a Public Key Document instead. Publishing a Keyring is an explicit warned exception, not the default.
+_Avoid_: Key file, secret file, public key file
 
 **Public Key Document**:
 A document containing only the Write Key and non-secret metadata. It is the only supported input for Write-only Senders because it omits all Master Password-related material, including the encrypted Read Key.

@@ -10,14 +10,21 @@ Build the browser bundle with `npm run build` in `sdk/node`. The file is `sdk/no
 
 ## Android
 
-The Kotlin module is a JVM jar (`kotlin("jvm")`) that Android apps can depend on. It now includes Sender DataLock, `DataEnvelope.parse(String)`, and strict UTF-8 for `lockText`. There is no AAR module in this repository: the Android Gradle plugin and an instrumented test device are not part of the current build. Shipping an AAR also has to decide how to avoid clashing with Android's trimmed BouncyCastle. That is tracked as a follow-up, not claimed here.
+`sdk/kotlin` is still the JVM module used by tests and desktop. `sdk/kotlin/android` is an Android library (min SDK 26, compile SDK 34) that compiles the same Kotlin sources into an AAR:
+
+```sh
+export ANDROID_HOME=/path/to/android-sdk
+gradle -p sdk/kotlin :android:assembleRelease
+```
+
+The release archive is `sdk/kotlin/android/build/outputs/aar/android-release.aar`. It contains `classes.jar` with Sender, User, stream, and password-strength types. The AAR depends on BouncyCastle (`bcprov-jdk18on`), kotlinx-serialization, and `com.nulab-inc:zxcvbn`. Android's own conscrypt/BouncyCastle can clash with a bundled `bcprov`; an app that already ships a provider should exclude one of them. File IO uses `Files.readAllBytes` / `Files.write`, which the Android 34 stubs provide, instead of `readString` / `writeString`.
 
 scrypt with the default `N=2^18` asks for about 256 MiB. Phones may fail that allocation. Callers can create a Keyring with a lower `N` inside the accepted window; the CLI warns below `2^17`. Readers still accept historical Keyrings down to `2^14`.
 
 ## iOS
 
-There is no Swift SDK. A WKWebView or React Native app can use the browser module where WebCrypto X25519 exists (iOS 17.4+). A native CryptoKit port is future work. Nothing in this tree pretends to be that port.
+There is no Swift SDK in this repository. This environment has no Swift toolchain, so a native CryptoKit port was not added and nothing here pretends to compile as one. A WKWebView or React Native app can use the browser module where WebCrypto X25519 exists (iOS 17.4+). A native port would use CryptoKit for X25519, HKDF, and AES-GCM, plus a separate scrypt implementation, checked against the same vectors as the other SDKs.
 
 ## Kotlin streaming
 
-Python, Node, and the browser module implement `hxdl.stream.v1`. The Kotlin module does not yet. JVM callers with multi-megabyte payloads should use the Python or TypeScript stream API, or split under the 25 MB v1 envelope limit, until the Kotlin port lands.
+Python, Node, the browser module, and Kotlin implement `hxdl.stream.v1`. Kotlin exposes `lockStream` / `openStream` on `InputStream` and `OutputStream` for both Sender and User. `hxdl.manifest.v1` diffing is `Stream.changedChunkIndexes` inside the module; a public manifest builder matching Python's `seal_chunked` is not wrapped as its own top-level API yet.

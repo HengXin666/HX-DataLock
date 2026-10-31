@@ -7,6 +7,8 @@ import {
   KEY_LENGTH,
   KEYRING_SCHEMA,
   MAX_KEYRING_JSON_BYTES,
+  MIN_CREATE_SCRYPT_N,
+  MIN_SCRYPT_N,
   PUBLIC_KEY_SCHEMA,
 } from './constants.js';
 import { Keyring, PublicKeyDocument } from './documents.js';
@@ -24,7 +26,7 @@ import { readJson } from './json.js';
 import { isStableJson } from './json.js';
 import { checkPasswordStrength } from './password-strength.js';
 
-export function createKeyring(masterPassword, options: any = {}) {
+export function createKeyring(masterPassword: string, options: any = {}) {
   if (typeof masterPassword !== 'string') {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Master Password must be a string');
   }
@@ -32,7 +34,10 @@ export function createKeyring(masterPassword, options: any = {}) {
   const onReport = options.onPasswordReport ?? options.on_password_report;
   if (typeof onReport === 'function') onReport(report);
   const publicKeyring = Boolean(options.publicKeyring ?? options.public_keyring);
-  const allowWeak = Boolean(options.allowWeak ?? options.allow_weak);
+  const allowWeak = options.allowWeakPassword === true
+    || options.allow_weak_password === true
+    || options.allowWeak === true
+    || options.allow_weak === true;
   if (publicKeyring) {
     console.warn(
       'DANGER: creating a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.',
@@ -43,14 +48,21 @@ export function createKeyring(masterPassword, options: any = {}) {
         'A public Keyring requires a Master Password of at least 80 estimated bits',
       );
     }
-  } else if (!report.allowed && !allowWeak) {
+  } else if (report.allowed === false && !allowWeak) {
     throw new DataLockError(
       DataLockErrorCode.WEAK_MASTER_PASSWORD,
-      'Master Password is too weak to create a Keyring; pass allowWeak to override',
+      'Master Password is too weak to create a Keyring. Pass allowWeakPassword: true to create one anyway. Existing Keyrings can still be opened.',
     );
   }
   const scryptN = Number(options.scryptN || options.scrypt_n || DEFAULT_SCRYPT_N);
   validateScryptN(scryptN);
+  const allowLow = options.allowLowScryptN === true || options.allow_low_scrypt_n === true;
+  if (scryptN < MIN_CREATE_SCRYPT_N && !allowLow) {
+    throw new DataLockError(
+      DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS,
+      `scrypt N ${scryptN} is below the create-time minimum ${MIN_CREATE_SCRYPT_N}. Readers still accept Keyrings down to ${MIN_SCRYPT_N}. Pass allowLowScryptN: true to create one anyway.`,
+    );
+  }
   const { publicKey, privateKey } = generateKeyPairSync('x25519');
   const publicDer = publicKey.export({ format: 'der', type: 'spki' });
   const privateDer = privateKey.export({ format: 'der', type: 'pkcs8' });
@@ -89,7 +101,7 @@ export function createKeyring(masterPassword, options: any = {}) {
 
 export const create_keyring = createKeyring;
 
-export function initKeyring(path, masterPassword, options: any = {}) {
+export function initKeyring(path: any, masterPassword: any, options: any = {}) {
   const keyring = createKeyring(masterPassword, options);
   keyring.write(path);
   return keyring;
@@ -97,13 +109,13 @@ export function initKeyring(path, masterPassword, options: any = {}) {
 
 export const init_keyring = initKeyring;
 
-export function loadKeyring(path) {
+export function loadKeyring(path: any) {
   const keyring = new Keyring(readJson(path, MAX_KEYRING_JSON_BYTES));
   keyring.verify();
   return keyring;
 }
 
-export function verifyKeyringFile(path, options: any = {}) {
+export function verifyKeyringFile(path: any, options: any = {}) {
   const keyring = loadKeyring(path);
   if (options.requireStableJson && !isStableJson(path, keyring.raw)) {
     throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Keyring does not use stable v1 JSON');
@@ -111,7 +123,7 @@ export function verifyKeyringFile(path, options: any = {}) {
   return keyring;
 }
 
-export function exportPublicKeyDocument(keyring) {
+export function exportPublicKeyDocument(keyring: any) {
   const fullKeyring = keyring instanceof Keyring ? keyring : new Keyring(keyring);
   fullKeyring.verify();
   const document = new PublicKeyDocument({
@@ -123,7 +135,7 @@ export function exportPublicKeyDocument(keyring) {
   return document;
 }
 
-export function verifyPublicKeyDocumentFile(path, options: any = {}) {
+export function verifyPublicKeyDocumentFile(path: any, options: any = {}) {
   const document = PublicKeyDocument.read(path);
   if (options.requireStableJson && !isStableJson(path, document.raw)) {
     throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document does not use stable v1 JSON');
@@ -131,7 +143,7 @@ export function verifyPublicKeyDocumentFile(path, options: any = {}) {
   return document;
 }
 
-export function verifyPublicKeyDocumentKeyId(publicKeyDocument, expectedKeyId) {
+export function verifyPublicKeyDocumentKeyId(publicKeyDocument: any, expectedKeyId: any) {
   const document = publicKeyDocument instanceof PublicKeyDocument ? publicKeyDocument : new PublicKeyDocument(publicKeyDocument);
   document.verify();
   if (document.keyId !== expectedKeyId) {
@@ -140,36 +152,32 @@ export function verifyPublicKeyDocumentKeyId(publicKeyDocument, expectedKeyId) {
   return document;
 }
 
-export function makeSenderDataLock(publicKeyDocument, options: any = {}) {
+export function makeSenderDataLock(publicKeyDocument: any, options: any = {}) {
   if (publicKeyDocument instanceof Keyring || publicKeyDocument?.schema === KEYRING_SCHEMA || publicKeyDocument?.raw?.schema === KEYRING_SCHEMA) {
     throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Sender DataLock requires a Public Key Document, not a full Keyring');
   }
   const document = publicKeyDocument instanceof PublicKeyDocument ? publicKeyDocument : new PublicKeyDocument(publicKeyDocument);
   document.verify();
   const expectedKeyId = options.expectedKeyId || options.expected_key_id;
-  const requireExpectedKeyId = Boolean(options.requireExpectedKeyId ?? options.require_expected_key_id);
+  const allowUnpinned = options.allowUnpinnedPublicKey === true || options.allow_unpinned_public_key === true;
   if (expectedKeyId) {
     verifyPublicKeyDocumentKeyId(document, expectedKeyId);
-  } else if (requireExpectedKeyId) {
+  } else if (!allowUnpinned) {
     throw new DataLockError(
       DataLockErrorCode.UNPINNED_PUBLIC_KEY,
-      'Sender DataLock requires expectedKeyId so a replaced Public Key Document is rejected',
-    );
-  } else {
-    console.warn(
-      'Sender DataLock has no expectedKeyId. A replaced Public Key Document encrypts new data to the replacement key. Pass expectedKeyId.',
+      'Sender DataLock requires expectedKeyId so a replaced Public Key Document cannot be used by accident. Pass allowUnpinnedPublicKey: true only when the document is already authenticated.',
     );
   }
   return new SenderDataLock(document);
 }
 
-export function makeUserDataLock(keyring, options) {
+export function makeUserDataLock(keyring: any, options: any) {
   const fullKeyring = keyring instanceof Keyring ? keyring : new Keyring(keyring);
   const masterPassword = masterPasswordFromOptions(options);
   return new UserDataLock(fullKeyring, fullKeyring.unwrapReadKey(masterPassword));
 }
 
-function masterPasswordFromOptions(options) {
+function masterPasswordFromOptions(options: any) {
   if (typeof options === 'string') return options;
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     throw new DataLockError(
@@ -193,7 +201,7 @@ function masterPasswordFromOptions(options) {
   return options.masterPassword;
 }
 
-export function rewrapKeyring(keyring, currentPassword, newPassword, options: any = {}) {
+export function rewrapKeyring(keyring: any, currentPassword: any, newPassword: any, options: any = {}) {
   const fullKeyring = keyring instanceof Keyring ? keyring : new Keyring(keyring);
   if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Passwords must be strings');
@@ -202,7 +210,10 @@ export function rewrapKeyring(keyring, currentPassword, newPassword, options: an
   const onReport = options.onPasswordReport ?? options.on_password_report;
   if (typeof onReport === 'function') onReport(report);
   const publicKeyring = Boolean(options.publicKeyring ?? options.public_keyring);
-  const allowWeak = Boolean(options.allowWeak ?? options.allow_weak);
+  const allowWeak = options.allowWeakPassword === true
+    || options.allow_weak_password === true
+    || options.allowWeak === true
+    || options.allow_weak === true;
   if (publicKeyring && !report.allowedForPublicKeyring) {
     throw new DataLockError(
       DataLockErrorCode.WEAK_MASTER_PASSWORD,

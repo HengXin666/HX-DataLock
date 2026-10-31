@@ -24,7 +24,7 @@ from hx_datalock import (
 PASSWORD = "correct horse battery staple for hx datalock"
 
 
-def test_password_strength_report_rejects_weak_passwords() -> None:
+def test_weak_master_password_is_rejected_unless_the_caller_opts_in() -> None:
     weak_report = check_password_strength("password")
     assert weak_report["allowed"] is False
     assert weak_report["level"] == "weak"
@@ -37,12 +37,20 @@ def test_password_strength_report_rejects_weak_passwords() -> None:
     assert strong_report["level"] in {"good", "strong"}
     assert strong_report["warnings"] == []
 
-    with pytest.raises(DataLockError) as exc_info:
-        create_keyring("password", scrypt_n=16384)
-    assert exc_info.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
+    with pytest.raises(DataLockError) as rejected:
+        create_keyring("password", scrypt_n=16384, allow_low_scrypt_n=True)
+    assert rejected.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
 
-    keyring = create_keyring("password", scrypt_n=16384, allow_weak=True)
+    keyring = create_keyring(
+        "password",
+        scrypt_n=16384,
+        allow_low_scrypt_n=True,
+        allow_weak_password=True,
+    )
     assert keyring.raw["schema"] == "hxdl.keyring.v1"
+    # A Keyring created under the opt-in still opens. Creation policy does not
+    # apply when unwrapping an existing Read Key.
+    assert decrypt_message(keyring, "password", encrypt_message(keyring, b"still opens")) == b"still opens"
 
 
 @pytest.mark.parametrize(
@@ -101,14 +109,14 @@ def test_master_password_uses_nfc_normalization_for_unlock() -> None:
     decomposed_password = "Cafe\u0301 passphrase for hx datalock"
     composed_password = "Caf\u00e9 passphrase for hx datalock"
 
-    keyring = create_keyring(decomposed_password, scrypt_n=16384)
+    keyring = create_keyring(decomposed_password, scrypt_n=16384, allow_low_scrypt_n=True)
     envelope = encrypt_message(keyring, b"nfc unlock")
 
     assert decrypt_message(keyring, composed_password, envelope) == b"nfc unlock"
 
 
 def test_malformed_keyrings_and_public_key_documents_use_stable_error_codes() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     public_key_document = export_public_key_document(keyring)
 
     with pytest.raises(DataLockError) as keyring_exc:
@@ -137,7 +145,7 @@ def test_malformed_keyrings_and_public_key_documents_use_stable_error_codes() ->
 
 
 def test_malformed_data_envelope_uses_tampered_envelope_error_code() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     envelope = encrypt_message(keyring, b"malformed envelope")
 
     with pytest.raises(DataLockError) as envelope_exc:
@@ -150,7 +158,7 @@ def test_malformed_data_envelope_uses_tampered_envelope_error_code() -> None:
 
 
 def test_data_envelopes_with_missing_binary_fields_use_tampered_envelope_error_code() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
     envelope = user.lockBytes(b"malformed envelope")
 
@@ -168,7 +176,7 @@ def test_v1_documents_write_stable_json_and_read_by_field(tmp_path: Path) -> Non
     public_key_path = tmp_path / "public-key.hxdl.json"
     envelope_path = tmp_path / "sealed.hxdl.json"
 
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     public_key_document = export_public_key_document(keyring)
     envelope = encrypt_message(keyring, b"stable json foundation")
 
@@ -288,7 +296,7 @@ def test_v1_documents_write_stable_json_and_read_by_field(tmp_path: Path) -> Non
     ],
 )
 def test_v1_expected_failures_have_stable_error_codes(operation, expected_code) -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     envelope = encrypt_message(keyring, b"stable error codes")
 
     with pytest.raises(DataLockError) as exc_info:
@@ -326,10 +334,10 @@ def test_v1_compatibility_fixture_manifest_describes_cross_language_cases() -> N
 
 
 def test_sender_datalock_locks_bytes_from_public_key_document_only() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     public_key_document = export_public_key_document(keyring)
 
-    sender = makeSenderDataLock(public_key_document)
+    sender = makeSenderDataLock(public_key_document, expected_key_id=public_key_document.key_id)
     envelope = sender.lockBytes(b"write-only sender payload")
 
     assert envelope.raw["schema"] == "hxdl.envelope.v1"
@@ -340,8 +348,8 @@ def test_sender_datalock_locks_bytes_from_public_key_document_only() -> None:
 
 
 def test_sender_datalock_envelope_aad_does_not_bind_creation_time() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
-    sender = makeSenderDataLock(export_public_key_document(keyring))
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    sender = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id)
 
     envelope = sender.lockBytes(b"creation time is display metadata")
     envelope_with_changed_creation_time = DataEnvelope(
@@ -358,7 +366,7 @@ def test_sender_datalock_envelope_aad_does_not_bind_creation_time() -> None:
 
 
 def test_sender_datalock_rejects_keyrings_and_invalid_public_key_documents() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     public_key_document = export_public_key_document(keyring)
 
     with pytest.raises(DataLockError) as keyring_exc:
@@ -378,8 +386,8 @@ def test_sender_datalock_rejects_keyrings_and_invalid_public_key_documents() -> 
 
 
 def test_sender_datalock_lock_text_uses_strict_utf8() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
-    sender = makeSenderDataLock(export_public_key_document(keyring))
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    sender = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id)
 
     envelope = sender.lockText("HX DataLock 文本")
     assert decrypt_message(keyring, PASSWORD, envelope) == "HX DataLock 文本".encode("utf-8")
@@ -390,8 +398,8 @@ def test_sender_datalock_lock_text_uses_strict_utf8() -> None:
 
 
 def test_sender_datalock_lock_file_writes_envelope_and_enforces_v1_limit(tmp_path: Path) -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
-    sender = makeSenderDataLock(export_public_key_document(keyring))
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    sender = makeSenderDataLock(export_public_key_document(keyring), expected_key_id=keyring.key_id)
     input_path = tmp_path / "payload.bin"
     envelope_path = tmp_path / "payload.hxdl.json"
 
@@ -410,7 +418,7 @@ def test_sender_datalock_lock_file_writes_envelope_and_enforces_v1_limit(tmp_pat
 
 
 def test_user_datalock_opens_and_locks_payloads_for_local_user() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     envelope = encrypt_message(keyring, b"user readable payload")
 
     user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
@@ -427,8 +435,8 @@ def test_user_datalock_opens_and_locks_payloads_for_local_user() -> None:
 
 
 def test_user_datalock_reports_expected_open_failure_codes() -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
-    other_keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    other_keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
 
     with pytest.raises(DataLockError) as wrong_password_exc:
@@ -458,7 +466,7 @@ def test_user_datalock_reports_expected_open_failure_codes() -> None:
 
 
 def test_sdk_requires_explicit_master_password_even_when_environment_variable_exists(monkeypatch) -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     monkeypatch.setenv("HXDL_MASTER_PASSWORD", PASSWORD)
 
     with pytest.raises(DataLockError) as exc_info:
@@ -467,7 +475,7 @@ def test_sdk_requires_explicit_master_password_even_when_environment_variable_ex
 
 
 def test_user_datalock_file_helpers_write_outputs_and_enforce_v1_limit(tmp_path: Path) -> None:
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = makeUserDataLock(keyring, {"masterPassword": PASSWORD})
     input_path = tmp_path / "payload.bin"
     envelope_path = tmp_path / "payload.hxdl.json"

@@ -1,5 +1,7 @@
 package com.hxdatalock
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -13,7 +15,7 @@ class HxDataLockTest {
     @Test
     fun userCanCreateKeyringLockOpenAndClose() {
         val password = "correct horse battery staple for hx datalock"
-        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384))
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val user = HxDataLock.makeUserDataLock(keyring, password)
 
         val envelope = user.lockBytes("kotlin local payload".encodeToByteArray())
@@ -30,7 +32,7 @@ class HxDataLockTest {
     @Test
     fun senderLocksFromPublicDocumentAndEnvelopeParsesFromString() {
         val password = "correct horse battery staple for hx datalock"
-        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384))
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val document = HxDataLock.exportPublicKeyDocument(keyring)
         val sender = HxDataLock.makeSenderDataLock(document, expectedKeyId = document.keyId)
         val envelope = sender.lockText("from sender")
@@ -46,7 +48,7 @@ class HxDataLockTest {
     fun masterPasswordUsesNfcNormalizationForUnlock() {
         val decomposedPassword = "Cafe\u0301 passphrase for hx datalock"
         val composedPassword = "Caf\u00e9 passphrase for hx datalock"
-        val keyring = HxDataLock.createKeyring(decomposedPassword, CreateKeyringOptions(scryptN = 16384))
+        val keyring = HxDataLock.createKeyring(decomposedPassword, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val user = HxDataLock.makeUserDataLock(keyring, composedPassword)
 
         val envelope = user.lockText("nfc unlock")
@@ -56,7 +58,7 @@ class HxDataLockTest {
 
     @Test
     fun readsDocumentsByFieldAndWritesStableJson() {
-        val keyring = HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384))
+        val keyring = HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val publicKeyDocument = HxDataLock.exportPublicKeyDocument(keyring)
         val user = HxDataLock.makeUserDataLock(keyring, "correct horse battery staple for hx datalock")
         val envelope = user.lockText("stable json")
@@ -73,7 +75,7 @@ class HxDataLockTest {
         val path = Files.createTempFile("hxdl-keyring", ".json")
         try {
             if ("posix" !in path.fileSystem.supportedFileAttributeViews()) return
-            val keyring = HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384))
+            val keyring = HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
             Files.writeString(path, "{}")
             Files.setPosixFilePermissions(
                 path,
@@ -99,7 +101,7 @@ class HxDataLockTest {
     @Test
     fun expectedFailuresUseStableErrorCodes() {
         val password = "correct horse battery staple for hx datalock"
-        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384))
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val user = HxDataLock.makeUserDataLock(keyring, password)
         val envelope = user.lockText("stable error codes")
 
@@ -126,7 +128,7 @@ class HxDataLockTest {
         }
         assertEquals(DataLockErrorCode.UNSUPPORTED_ALGORITHM, unsupportedAlgorithm.code)
 
-        val secondKeyring = HxDataLock.createKeyring("another correct horse battery staple", CreateKeyringOptions(scryptN = 16384))
+        val secondKeyring = HxDataLock.createKeyring("another correct horse battery staple", CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val secondUser = HxDataLock.makeUserDataLock(secondKeyring, "another correct horse battery staple")
         val mismatch = assertFailsWith<DataLockException> {
             secondUser.openBytes(envelope)
@@ -137,7 +139,7 @@ class HxDataLockTest {
     @Test
     fun rejectsHardenedUntrustedInputs() {
         val password = "correct horse battery staple for hx datalock"
-        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384))
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
         val user = HxDataLock.makeUserDataLock(keyring, password)
         val envelope = user.lockBytes("hello".encodeToByteArray())
 
@@ -167,9 +169,71 @@ class HxDataLockTest {
     }
 
     @Test
+    fun passwordStrengthMatchesTheSharedRefusalPolicy() {
+        val weak = HxDataLock.checkPasswordStrength("password")
+        assertEquals("weak", weak.level)
+        assertFalse(weak.allowed)
+        assertTrue(weak.score <= 1)
+        val strong = HxDataLock.checkPasswordStrength("correct horse battery staple for hx datalock")
+        assertTrue(strong.allowed)
+        assertTrue(strong.level == "good" || strong.level == "strong")
+    }
+
+    @Test
+    fun streamRoundTripRejectsTruncation() {
+        val password = "correct horse battery staple for hx datalock"
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
+        val document = HxDataLock.exportPublicKeyDocument(keyring)
+        val sender = HxDataLock.makeSenderDataLock(document, expectedKeyId = document.keyId)
+        val payload = ByteArray(100) { it.toByte() }
+        val sealed = ByteArrayOutputStream()
+        val info = sender.lockStream(ByteArrayInputStream(payload), sealed, chunkSize = 32)
+        assertEquals(100, info["plaintextLength"])
+        val user = HxDataLock.makeUserDataLock(keyring, password)
+        val opened = ByteArrayOutputStream()
+        user.openStream(ByteArrayInputStream(sealed.toByteArray()), opened)
+        assertContentEquals(payload, opened.toByteArray())
+        val truncated = sealed.toByteArray().copyOf(sealed.size() - 8)
+        val rejected = assertFailsWith<DataLockException> {
+            user.openStream(ByteArrayInputStream(truncated), ByteArrayOutputStream())
+        }
+        assertEquals(DataLockErrorCode.TAMPERED_STREAM, rejected.code)
+    }
+
+    @Test
     fun senderDataLockIsPartOfThePublicSurface() {
         val publicMembers = HxDataLock::class.java.methods.map { it.name }.toSet()
 
         assertTrue(publicMembers.contains("makeSenderDataLock"))
+    }
+
+    @Test
+    fun weakMasterPasswordDoesNotCreateAKeyringUnlessAllowed() {
+        val rejected = assertFailsWith<DataLockException> {
+            HxDataLock.createKeyring("password", CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
+        }
+        assertEquals(DataLockErrorCode.WEAK_MASTER_PASSWORD, rejected.code)
+
+        val keyring = HxDataLock.createKeyring(
+            "password",
+            CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true, allowWeakPassword = true),
+        )
+        val user = HxDataLock.makeUserDataLock(keyring, "password")
+        assertEquals("still opens", user.openText(user.lockText("still opens")))
+    }
+
+    @Test
+    fun createRejectsScryptNBelowTheCreateFloor() {
+        val rejected = assertFailsWith<DataLockException> {
+            HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384))
+        }
+        assertEquals(DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS, rejected.code)
+
+        val keyring = HxDataLock.createKeyring(
+            "correct horse battery staple for hx datalock",
+            CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true),
+        )
+        val user = HxDataLock.makeUserDataLock(keyring, "correct horse battery staple for hx datalock")
+        assertEquals("legacy", user.openText(user.lockText("legacy")))
     }
 }

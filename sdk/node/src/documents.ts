@@ -17,7 +17,7 @@ import { readJson, writeJson } from './json.js';
 export class Keyring {
   raw: any;
 
-  constructor(raw) {
+  constructor(raw: any) {
     this.raw = raw;
   }
   get keyId() {
@@ -43,10 +43,10 @@ export class Keyring {
   serialize() {
     return `${JSON.stringify(this.raw, null, 2)}\n`;
   }
-  write(path) {
+  write(path: any) {
     writeJson(path, this.raw);
   }
-  unwrapReadKey(masterPassword) {
+  unwrapReadKey(masterPassword: any) {
     this.verify();
     const encrypted = this.raw.encryptedReadKey;
     const wrappingKey = derivePasswordKey(masterPassword, encrypted.kdf);
@@ -71,7 +71,7 @@ export class Keyring {
 export class PublicKeyDocument {
   raw: any;
 
-  constructor(raw) {
+  constructor(raw: any) {
     this.raw = raw;
   }
   get keyId() {
@@ -102,10 +102,10 @@ export class PublicKeyDocument {
   serialize() {
     return `${JSON.stringify(this.raw, null, 2)}\n`;
   }
-  write(path) {
+  write(path: any) {
     writeJson(path, this.raw);
   }
-  static parse(text) {
+  static parse(text: any) {
     if (typeof text !== 'string') {
       throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Public Key Document JSON must be a string');
     }
@@ -113,7 +113,7 @@ export class PublicKeyDocument {
     document.verify();
     return document;
   }
-  static read(path) {
+  static read(path: any) {
     const document = new PublicKeyDocument(readJson(path, MAX_PUBLIC_KEY_JSON_BYTES));
     document.verify();
     return document;
@@ -124,7 +124,7 @@ export class DataEnvelope {
   raw: any;
   decoded: any;
 
-  constructor(raw) {
+  constructor(raw: any) {
     this.raw = raw;
     this.decoded = null;
   }
@@ -153,10 +153,10 @@ export class DataEnvelope {
       ciphertextBytes: this.decoded.ciphertext.length,
     };
   }
-  write(path) {
+  write(path: any) {
     writeJson(path, this.raw);
   }
-  static parse(text) {
+  static parse(text: any) {
     if (typeof text !== 'string') {
       throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Data Envelope JSON must be a string');
     }
@@ -173,7 +173,7 @@ export class DataEnvelope {
     document.verify();
     return document;
   }
-  static read(path) {
+  static read(path: any) {
     const document = new DataEnvelope(readJson(path));
     document.verify();
     return document;

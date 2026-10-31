@@ -30,6 +30,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Refuse a Keyring in a public repository
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+          REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: bash scripts/refuse-public-keyring.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

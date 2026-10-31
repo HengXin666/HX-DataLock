@@ -11,17 +11,17 @@ private fun readJsonDocument(path: Path, maxBytes: Int): LinkedHashMap<String, A
     if (Files.size(path) > maxBytes) {
         throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "JSON document exceeds the v1 size limit")
     }
-    return StableJson.parse(Files.readString(path))
+    return StableJson.parse(Files.readAllBytes(path).toString(Charsets.UTF_8))
 }
 
 private fun writeJsonDocument(path: Path, text: String) {
     // Converge an existing file's mode rather than only setting it at creation,
     // matching the Keyring writer and the other SDKs.
     if ("posix" in path.fileSystem.supportedFileAttributeViews()) {
-        Files.writeString(path, text)
+        Files.write(path, text.toByteArray(Charsets.UTF_8))
         Files.setPosixFilePermissions(path, setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))
     } else {
-        Files.writeString(path, text)
+        Files.write(path, text.toByteArray(Charsets.UTF_8))
     }
 }
 
@@ -33,10 +33,10 @@ private fun writePrivateJsonDocument(path: Path, text: String) {
         } catch (_: FileAlreadyExistsException) {
             Files.setPosixFilePermissions(path, permissions)
         }
-        Files.writeString(path, text, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+        Files.write(path, text.toByteArray(Charsets.UTF_8), StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
         Files.setPosixFilePermissions(path, permissions)
     } else {
-        Files.writeString(path, text)
+        Files.write(path, text.toByteArray(Charsets.UTF_8))
     }
 }
 

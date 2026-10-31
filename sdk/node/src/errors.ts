@@ -12,6 +12,7 @@ export const DataLockErrorCode = Object.freeze({
   INVALID_ARGUMENT: 'INVALID_ARGUMENT',
   WEAK_MASTER_PASSWORD: 'WEAK_MASTER_PASSWORD',
   INVALID_SCRYPT_PARAMS: 'INVALID_SCRYPT_PARAMS',
+  INSECURE_SCRYPT_PARAMETERS: 'INSECURE_SCRYPT_PARAMETERS',
   UNPINNED_PUBLIC_KEY: 'UNPINNED_PUBLIC_KEY',
   TAMPERED_STREAM: 'TAMPERED_STREAM',
   INVALID_MANIFEST: 'INVALID_MANIFEST',
@@ -21,7 +22,7 @@ export const DataLockErrorCode = Object.freeze({
 export class DataLockError extends Error {
   code: string;
 
-  constructor(code, message) {
+  constructor(code: string, message: string) {
     super(message);
     this.name = 'DataLockError';
     this.code = code;

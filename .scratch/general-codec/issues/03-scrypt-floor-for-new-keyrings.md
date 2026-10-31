@@ -1,11 +1,5 @@
 # Raise the scrypt floor for new Keyrings
 
-Status: 交给代理
+Status: 不予处理
 
-Readers still accept scrypt `N` from `2^14` through `2^20` so historical Keyrings open. The CLI warns below `2^17`. New Keyrings can still be created at the old floor, which is cheap for an offline guess if that Keyring leaks.
-
-## Acceptance
-
-- Keyring creation below `2^17` fails with `INVALID_SCRYPT_PARAMS` unless a named test override is set.
-- Existing Keyrings at `2^14` still unwrap.
-- Python, TypeScript, and Kotlin use the same code.
+Done. New Keyrings with `N < 2^17` fail with `INSECURE_SCRYPT_PARAMETERS` unless the caller passes `allow_low_scrypt_n` / `allowLowScryptN` / `--allow-low-scrypt-n`. Readers still open Keyrings down to `2^14`. Parameters outside the reader window still use `INVALID_SCRYPT_PARAMS`.

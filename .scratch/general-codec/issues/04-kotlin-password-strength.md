@@ -1,10 +1,5 @@
 # Kotlin password strength
 
-Status: 交给代理
+Status: 不予处理
 
-Python and TypeScript reject weak Master Passwords with a zxcvbn-style report. Kotlin `createKeyring` does not. A Kotlin caller can still create a Keyring with `password`.
-
-## Acceptance
-
-- Kotlin returns the same report fields and rejects weak passwords unless an explicit allow-weak flag is set.
-- The public-Keyring 80-bit floor matches ADR 0025.
+Done in the codec branch. `HxDataLock.checkPasswordStrength` uses `com.nulab-inc:zxcvbn` and the same score / 46-bit / 80-bit rules as Python and TypeScript. `createKeyring` refuses a weak password unless `allowWeakPassword` is set.

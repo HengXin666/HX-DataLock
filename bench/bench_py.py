@@ -22,7 +22,7 @@ def median(samples: list[float]) -> float:
 
 def main() -> None:
     sizes = [int(item) for item in sys.argv[1:]] or [64 * 1024, 256 * 1024]
-    keyring = create_keyring(PASSWORD, scrypt_n=16384)
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
     user = make_user_data_lock(keyring, PASSWORD)
     for size in sizes:
         payload = bytes([size % 251]) * size
