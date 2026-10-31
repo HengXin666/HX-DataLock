@@ -1,6 +1,7 @@
 name: Swift SDK
 
 on:
+  push:
   pull_request:
   workflow_dispatch:
 
