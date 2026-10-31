@@ -97,6 +97,20 @@ def test_rewrap_keeps_existing_envelopes_openable() -> None:
     assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
 
 
+def test_rewrap_public_floor_cannot_be_waived() -> None:
+    keyring = create_keyring(PASSWORD, scrypt_n=16384, allow_low_scrypt_n=True)
+    with pytest.raises(DataLockError) as exc_info:
+        rewrap_keyring(
+            keyring,
+            PASSWORD,
+            "password",
+            allow_weak=True,
+            allow_low_scrypt_n=True,
+            public_keyring=True,
+        )
+    assert exc_info.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
+
+
 def test_public_keyring_requires_high_entropy() -> None:
     report = check_password_strength(PASSWORD)
     assert report["allowedForPublicKeyring"] is True

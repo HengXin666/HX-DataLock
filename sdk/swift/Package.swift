@@ -18,8 +18,20 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "zxcvbn",
+            path: "Sources/ZxcvbnPort",
+            resources: [
+                .copy("Resources/adjacency-graphs.json"),
+                .copy("Resources/frequency-lists.json"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+            ]
+        ),
+        .target(
             name: "HXDataLock",
             dependencies: [
+                "zxcvbn",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "_CryptoExtras", package: "swift-crypto"),
             ],

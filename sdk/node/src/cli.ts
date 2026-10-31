@@ -14,6 +14,7 @@ import {
   exportPublicKeyDocument,
   loadKeyring,
   makeSenderDataLock,
+  rewrapKeyring,
   makeUserDataLock,
   verifyKeyringFile,
   verifyPublicKeyDocumentFile,
@@ -25,6 +26,7 @@ function usage() {
 Usage:
   node sdk/node/hx-datalock.mjs init [--keyring keyring.hxdl.json] [--password-env NAME] [--password-stdin] [--scrypt-n N] [--allow-weak-password] [--allow-low-scrypt-n] [--public-keyring] [--generate-password]
   Creates a private local Keyring. Do not publish it. The Public Key Document is the publishable artifact.
+  node sdk/node/hx-datalock.mjs rewrap [--keyring keyring.hxdl.json] [--out keyring.hxdl.json] --new-password-env NAME [--password-env NAME] [--allow-weak-password] [--allow-low-scrypt-n] [--public-keyring]
   node sdk/node/hx-datalock.mjs export-public [--keyring keyring.hxdl.json] [--out public.hxdl.json]
   node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --expect-key-id x25519:... --in plain.bin --out sealed.hxdl.json [--allow-unpinned-public-key]
   node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in sealed.hxdl.json --out plain.bin [--password-env NAME]
@@ -159,6 +161,28 @@ async function commandInit(options: CliOptions) {
   console.log('Keep this Keyring on private local storage. Do not commit it to public GitHub or other public storage. Publish a Public Key Document for senders.');
 }
 
+async function commandRewrap(options: CliOptions) {
+  if (options['public-keyring'] === 'true') {
+    console.error(
+      'DANGER: this Keyring is being rewrapped for public storage. Anyone who downloads it can guess the Master Password offline. The new password must measure at least 80 bits.',
+    );
+  }
+  const current = await readPassword(options);
+  const nextName = options['new-password-env'];
+  const next = nextName ? process.env[nextName] : '';
+  if (!next) throw new Error(`Environment variable ${nextName || ''} is empty or missing`);
+  const rewrapped = rewrapKeyring(loadKeyring(options.keyring || 'keyring.hxdl.json'), current, next, {
+    allowWeakPassword: options['allow-weak-password'] === 'true' || options['allow-weak'] === 'true',
+    allowLowScryptN: options['allow-low-scrypt-n'] === 'true',
+    publicKeyring: options['public-keyring'] === 'true',
+    onPasswordReport: reportPasswordStrength,
+  });
+  const outPath = options.out || options.keyring || 'keyring.hxdl.json';
+  rewrapped.write(outPath);
+  console.log(`Keyring rewritten: ${outPath}`);
+  console.log(`Write Key ID: ${rewrapped.keyId}`);
+}
+
 function commandExportPublic(options: CliOptions) {
   const document = exportPublicKeyDocument(loadKeyring(options.keyring || 'keyring.hxdl.json'));
   if (options.out) {
@@ -252,6 +276,9 @@ export async function main(argv = process.argv.slice(2)) {
   switch (command) {
     case 'init':
       await commandInit(options);
+      break;
+    case 'rewrap':
+      await commandRewrap(options);
       break;
     case 'export-public':
       commandExportPublic(options);

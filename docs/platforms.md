@@ -32,9 +32,9 @@ scrypt with the default `N=2^18` asks for about 256 MiB. Phones may fail that al
 
 ## Swift
 
-`sdk/swift` is a Swift Package. It creates Keyrings and locks and opens `hxdl.envelope.v1` with swift-crypto (X25519, HKDF, AES-GCM, and scrypt). The `hxdl-swift` executable is covered by the cross-SDK envelope test when `sdk/swift/.build/debug/hxdl-swift` exists. See `sdk/swift/README.md` for the Linux link flags.
+`sdk/swift` is a Swift Package. It creates and rewraps Keyrings, locks and opens `hxdl.envelope.v1` and `hxdl.stream.v1`, seals `hxdl.manifest.v1`, and signs Ed25519 attestations. Password checks use a vendored zxcvbn with the same 46-bit private floor and 80-bit public-Keyring floor as the other SDKs. Primitives come from swift-crypto. The `hxdl-swift` executable joins the cross-SDK tests when `sdk/swift/.build/debug/hxdl-swift` exists. See `sdk/swift/README.md` for the Linux link flags.
 
-This package was built and tested on Linux. An iOS or macOS app target was not compiled here: there is no Xcode toolchain in this environment. CryptoKit does not implement scrypt, so the package uses swift-crypto on every platform, including Apple targets. Streaming, manifests, attestation, and zxcvbn are not in the Swift package.
+This package was built and tested on Linux. An iOS or macOS app target was not compiled here: there is no Xcode toolchain in this environment. CryptoKit does not implement scrypt, so the package uses swift-crypto on every platform, including Apple targets.
 
 ## Kotlin streaming
 

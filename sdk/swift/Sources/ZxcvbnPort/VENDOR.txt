@@ -1,0 +1,2 @@
+
+Vendored from https://github.com/DeVitoC/zxcvbn-swift (MIT). The adjacency-graph loader no longer force-casts JSON nulls, which aborted on Linux.

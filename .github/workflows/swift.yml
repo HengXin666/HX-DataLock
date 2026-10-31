@@ -43,4 +43,6 @@ jobs:
         working-directory: sdk/node
         run: npm ci && npm run build
       - name: Cross-SDK envelope test including Swift
-        run: uv run pytest tests/compat/test_cross_language.py::test_each_sdk_can_open_envelopes_locked_by_every_sdk -q
+        run: |
+          uv run pytest tests/compat/test_cross_language.py::test_each_sdk_can_open_envelopes_locked_by_every_sdk -q
+          uv run pytest tests/compat/test_swift_codec.py -q
