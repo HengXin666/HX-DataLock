@@ -18,6 +18,8 @@ The content key is HKDF-SHA256 over the X25519 shared secret. HKDF info is `hxdl
 hxdl.stream.v1:{keyId}:X25519:HKDF-SHA256:AES-256-GCM:{chunkSize}:{index}:{0|1}:{headerSha256}
 ```
 
+HKDF info is the UTF-8 string `hxdl.stream.v1:` plus the recipient key id plus `:` plus the raw 32-byte SHA-256 of the recipient SPKI. The 12-byte nonce is the chunk index as 8 big-endian bytes, three zero bytes, and `0x01` on the last chunk or `0x00` otherwise.
+
 `headerSha256` is unpadded base64url of SHA-256 over the exact header bytes. A non-final chunk's plaintext length must equal `chunkSize`. The final chunk may be shorter, including empty. The container must end on a final chunk and must not continue after it.
 
 `chunkSize` is an integer from 1 to 8 MiB. 1 MiB is the default. Callers that need a multi-gigabyte file should stream it; the SDK does not load the whole plaintext to seal a stream.
@@ -29,7 +31,9 @@ hxdl.stream.v1:{keyId}:X25519:HKDF-SHA256:AES-256-GCM:{chunkSize}:{index}:{0|1}:
 - `fileId`, `version` (positive integer), `chunkSize`, `totalPlaintextLength`
 - `chunks`: contiguous indexes from 0, each with `plaintextLength`, `plaintextSha256`, and `sealedSha256` (unpadded base64url)
 
-Each sealed chunk is its own stream whose header carries the same `fileId` and `chunkIndex`. Incremental update compares plaintext hashes. Only indexes whose plaintext hash changed need a new sealed blob. The new manifest still points at the old sealed hash for unchanged chunks. Sign the manifest if a reader must reject an older version.
+Each sealed chunk is its own stream whose header carries the same `fileId` and `chunkIndex`. `totalPlaintextLength` is the sum of `plaintextLength`. Every chunk except the last has `plaintextLength == chunkSize`. Incremental update compares plaintext hashes at the same index. `seal_chunked` keeps the previous sealed bytes when that index's plaintext hash and length are unchanged, so the new manifest's `sealedSha256` still names that blob. Identical plaintext in two indexes is not interchangeable: the chunk header binds the index. Only changed indexes need a new upload.
+
+The manifest is plaintext JSON. `plaintextSha256` leaks the hash of each plaintext chunk. Predictable content can be confirmed, and version diffs show which chunks changed. Lock the manifest with `lockText`, or sign it, before placing it on public storage. An unsigned manifest can drop a tail chunk and shrink `totalPlaintextLength` without failing chunk AEAD. Sign it when a reader must reject truncation or rollback.
 
 ## Application transition
 

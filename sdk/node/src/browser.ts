@@ -14,6 +14,12 @@ import {
   DEFAULT_SCRYPT_P,
   DEFAULT_SCRYPT_R,
   DEFAULT_STREAM_CHUNK_SIZE,
+  MAX_SCRYPT_N,
+  MAX_SCRYPT_P,
+  MAX_SCRYPT_R,
+  MAX_STREAM_CHUNK_SIZE,
+  MIN_SCRYPT_N,
+  MIN_STREAM_CHUNK_SIZE,
   ENVELOPE_ALG,
   ENVELOPE_SCHEMA,
   KEY_LENGTH,
@@ -23,6 +29,7 @@ import {
   STREAM_SCHEMA,
 } from './constants.js';
 import { DataLockError, DataLockErrorCode } from './errors.js';
+import type { CreateKeyringOptions, EnvelopeJson, KeyringJson, PublicKeyDocumentJson, ScryptKdf } from './types.js';
 
 export { checkPasswordStrength, DataLockError, DataLockErrorCode };
 export type { PasswordStrengthReport } from './password-strength.js';
@@ -64,13 +71,13 @@ function utcNow(): string {
   return new Date().toISOString();
 }
 
-function enforcePassword(masterPassword: string, options: Record<string, unknown> = {}) {
+function enforcePassword(masterPassword: string, options: CreateKeyringOptions = {}) {
   if (typeof masterPassword !== 'string') {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Master Password must be a string');
   }
   const report = checkPasswordStrength(masterPassword);
   const onReport = options.onPasswordReport;
-  if (typeof onReport === 'function') onReport(report);
+  if (onReport) onReport(report);
   const allowWeak = Boolean(options.allowWeak);
   const publicKeyring = Boolean(options.publicKeyring);
   if (publicKeyring && !report.allowedForPublicKeyring) {
@@ -161,7 +168,12 @@ function keyIdForSpki(spki: Uint8Array, prefix: string): Promise<string> {
   return sha256(spki).then((digest) => `${prefix}:${sha256Base64Url(digest).slice(0, 22)}`);
 }
 
-export async function createKeyring(masterPassword: string, options: Record<string, any> = {}) {
+export async function createKeyring(masterPassword: string, options: CreateKeyringOptions = {}): Promise<KeyringJson> {
+  if (options.publicKeyring) {
+    console.warn(
+      'DANGER: creating a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.',
+    );
+  }
   enforcePassword(masterPassword, options);
   const scryptN = Number(options.scryptN || DEFAULT_SCRYPT_N);
   const pair = (await subtle().generateKey({ name: 'X25519' }, true, ['deriveBits'])) as CryptoKeyPair;
@@ -184,7 +196,7 @@ export async function createKeyring(masterPassword: string, options: Record<stri
   };
 }
 
-export function exportPublicKeyDocument(keyring: any) {
+export function exportPublicKeyDocument(keyring: KeyringJson): PublicKeyDocumentJson {
   return {
     schema: PUBLIC_KEY_SCHEMA,
     createdAt: utcNow(),
@@ -201,7 +213,18 @@ function asBytes(payload: Uint8Array | ArrayBuffer): Uint8Array {
   throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'lockBytes requires Uint8Array');
 }
 
-export async function lockBytes(publicKeyDocument: any, payload: Uint8Array) {
+interface BrowserPublicInput {
+  schema?: string;
+  encryptedReadKey?: unknown;
+  publicWriteKey?: { keyId: string; spki: string };
+  raw?: { publicWriteKey?: { keyId: string; spki: string } };
+}
+
+export async function lockBytes(
+  publicKeyDocument: BrowserPublicInput,
+  payload: Uint8Array,
+  options: { expectedKeyId?: string; allowUnpinnedPublicKey?: boolean } = {},
+) {
   const bytes = asBytes(payload);
   if (bytes.length > MAX_V1_FILE_BYTES) {
     throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support payloads up to 25 MB');
@@ -210,7 +233,26 @@ export async function lockBytes(publicKeyDocument: any, payload: Uint8Array) {
     throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Sender DataLock requires a Public Key Document, not a full Keyring');
   }
   const write = publicKeyDocument.publicWriteKey ?? publicKeyDocument.raw?.publicWriteKey;
-  const recipient = await importX25519Public(base64ToBytes(write.spki));
+  if (!write?.spki || !write.keyId) {
+    throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document is missing a Write Key');
+  }
+  if (options.expectedKeyId) {
+    if (write?.keyId !== options.expectedKeyId) {
+      throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Public Key Document keyId does not match the expected keyId');
+    }
+  } else if (!options.allowUnpinnedPublicKey) {
+    throw new DataLockError(
+      DataLockErrorCode.UNPINNED_PUBLIC_KEY,
+      'lockBytes requires expectedKeyId so a replaced Public Key Document is rejected',
+    );
+  }
+  let recipient: CryptoKey;
+  try {
+    recipient = await importX25519Public(base64ToBytes(write.spki));
+  } catch (error) {
+    if (error instanceof DataLockError) throw error;
+    throw new DataLockError(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, 'Invalid public Write Key');
+  }
   const ephemeral = (await subtle().generateKey({ name: 'X25519' }, true, ['deriveBits'])) as CryptoKeyPair;
   const ephemeralSpki = new Uint8Array(await subtle().exportKey('spki', ephemeral.publicKey));
   const shared = await sharedSecret(ephemeral.privateKey, recipient);
@@ -232,14 +274,38 @@ export async function lockBytes(publicKeyDocument: any, payload: Uint8Array) {
   };
 }
 
-export async function lockText(publicKeyDocument: any, text: string) {
+export async function lockText(
+  publicKeyDocument: BrowserPublicInput,
+  text: string,
+  options: { expectedKeyId?: string; allowUnpinnedPublicKey?: boolean } = {},
+) {
   if (typeof text !== 'string') throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'lockText requires text input');
-  return lockBytes(publicKeyDocument, textEncoder.encode(text));
+  return lockBytes(publicKeyDocument, textEncoder.encode(text), options);
 }
 
-async function unwrapReadKey(keyring: any, masterPassword: string) {
+function validateScryptKdf(kdf: ScryptKdf) {
+  const n = kdf?.N;
+  const r = kdf?.r;
+  const p = kdf?.p;
+  if (!Number.isInteger(n) || n < MIN_SCRYPT_N || n > MAX_SCRYPT_N || (n & (n - 1)) !== 0) {
+    throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Invalid scrypt N parameter');
+  }
+  if (!Number.isInteger(r) || r < 1 || r > MAX_SCRYPT_R) {
+    throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Invalid scrypt r parameter');
+  }
+  if (!Number.isInteger(p) || p < 1 || p > MAX_SCRYPT_P) {
+    throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Invalid scrypt p parameter');
+  }
+  if (kdf.keyLength !== KEY_LENGTH) {
+    throw new DataLockError(DataLockErrorCode.INVALID_KEYRING, 'Invalid scrypt keyLength parameter');
+  }
+  base64ToBytes(kdf.salt);
+}
+
+async function unwrapReadKey(keyring: KeyringJson, masterPassword: string) {
   const encrypted = keyring.encryptedReadKey;
   const kdf = encrypted.kdf;
+  validateScryptKdf(kdf);
   const wrapping = await scrypt(masterPassword, base64ToBytes(kdf.salt), kdf.N, kdf.r, kdf.p);
   const aad = textEncoder.encode(`${KEYRING_SCHEMA}:${keyring.publicWriteKey.keyId}:scrypt:AES-256-GCM`);
   try {
@@ -257,9 +323,17 @@ async function unwrapReadKey(keyring: any, masterPassword: string) {
   }
 }
 
-export async function openBytes(keyring: any, masterPassword: string, envelope: any) {
+export async function openBytes(keyring: KeyringJson, masterPassword: string, envelope: EnvelopeJson) {
   if (typeof masterPassword !== 'string') {
     throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'masterPassword must be a string');
+  }
+  if (envelope?.schema !== ENVELOPE_SCHEMA) {
+    throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, `Unsupported Data Envelope schema: ${envelope?.schema}`);
+  }
+  const alg = envelope.alg;
+  const algOk = alg && alg.kem === ENVELOPE_ALG.kem && alg.kdf === ENVELOPE_ALG.kdf && alg.aead === ENVELOPE_ALG.aead && Object.keys(alg).length === 3;
+  if (!algOk) {
+    throw new DataLockError(DataLockErrorCode.UNSUPPORTED_ALGORITHM, 'Data Envelope must use X25519, HKDF-SHA256, and AES-256-GCM');
   }
   const privatePkcs8 = await unwrapReadKey(keyring, masterPassword);
   const readKey = await importX25519Private(privatePkcs8);
@@ -270,7 +344,6 @@ export async function openBytes(keyring: any, masterPassword: string, envelope: 
   const shared = await sharedSecret(readKey, ephemeral);
   const info = textEncoder.encode(`${ENVELOPE_SCHEMA}:${keyring.publicWriteKey.keyId}`);
   const contentKey = await hkdf(shared, base64ToBytes(envelope.hkdfSalt), info);
-  const alg = envelope.alg;
   const aad = textEncoder.encode(`${ENVELOPE_SCHEMA}:${keyring.publicWriteKey.keyId}:${alg.kem}:${alg.kdf}:${alg.aead}`);
   return aesGcmDecrypt(
     contentKey,
@@ -282,11 +355,11 @@ export async function openBytes(keyring: any, masterPassword: string, envelope: 
   );
 }
 
-export async function openText(keyring: any, masterPassword: string, envelope: any) {
+export async function openText(keyring: KeyringJson, masterPassword: string, envelope: EnvelopeJson) {
+  const bytes = await openBytes(keyring, masterPassword, envelope);
   try {
-    return textDecoder.decode(await openBytes(keyring, masterPassword, envelope));
+    return textDecoder.decode(bytes);
   } catch (error) {
-    if (error instanceof DataLockError) throw error;
     throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'Data Envelope payload is not valid UTF-8');
   }
 }
@@ -300,7 +373,7 @@ export function parseEnvelope(text: string) {
   return raw;
 }
 
-export function inspectEnvelope(envelope: any) {
+export function inspectEnvelope(envelope: EnvelopeJson) {
   return {
     schema: envelope.schema,
     recipientKeyId: envelope.recipientKeyId,
@@ -310,12 +383,18 @@ export function inspectEnvelope(envelope: any) {
   };
 }
 
-export function serializeDocument(raw: any): string {
+export function serializeDocument(raw: object): string {
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
 
-export async function lockStream(publicKeyDocument: any, source: ReadableStream<Uint8Array>, options: { chunkSize?: number } = {}) {
+export async function lockStream(publicKeyDocument: PublicKeyDocumentJson, source: ReadableStream<Uint8Array>, options: { chunkSize?: number } = {}) {
   const chunkSize = options.chunkSize ?? DEFAULT_STREAM_CHUNK_SIZE;
+  if (!Number.isInteger(chunkSize) || chunkSize < MIN_STREAM_CHUNK_SIZE || chunkSize > MAX_STREAM_CHUNK_SIZE) {
+    throw new DataLockError(
+      DataLockErrorCode.INVALID_ARGUMENT,
+      `chunkSize must be an integer from ${MIN_STREAM_CHUNK_SIZE} to ${MAX_STREAM_CHUNK_SIZE}`,
+    );
+  }
   const write = publicKeyDocument.publicWriteKey;
   const recipientSpki = base64ToBytes(write.spki);
   const recipient = await importX25519Public(recipientSpki);
@@ -347,6 +426,9 @@ export async function lockStream(publicKeyDocument: any, source: ReadableStream<
         stash = new Uint8Array(0);
         return { bytes, eof: true };
       }
+      if (!(next.value instanceof Uint8Array)) {
+        throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'lockStream requires Uint8Array chunks');
+      }
       stash = concat([stash, next.value]);
     }
     const bytes = stash.slice(0, n);
@@ -375,40 +457,55 @@ export async function lockStream(publicKeyDocument: any, source: ReadableStream<
     controller.enqueue(body);
   }
 
+  let headerSent = false;
+  let index = 0;
+  let previous: { bytes: Uint8Array; eof: boolean } | null = null;
+  let finished = false;
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      controller.enqueue(new Uint8Array([0x48, 0x58, 0x44, 0x4c, 1]));
-      const len = new Uint8Array(4);
-      new DataView(len.buffer).setUint32(0, headerBytes.length);
-      controller.enqueue(len);
-      controller.enqueue(headerBytes);
-      let index = 0;
-      let previous = await readUpTo(chunkSize);
-      if (previous.eof) {
+    async pull(controller) {
+      if (finished) return;
+      if (!headerSent) {
+        headerSent = true;
+        controller.enqueue(new Uint8Array([0x48, 0x58, 0x44, 0x4c, 1]));
+        const len = new Uint8Array(4);
+        new DataView(len.buffer).setUint32(0, headerBytes.length);
+        controller.enqueue(len);
+        controller.enqueue(headerBytes);
+        return;
+      }
+      if (previous === null) {
+        previous = await readUpTo(chunkSize);
+        if (previous.eof) {
+          await emit(controller, previous.bytes, true, index);
+          finished = true;
+          controller.close();
+        }
+        return;
+      }
+      const next = await readUpTo(chunkSize);
+      if (next.eof && next.bytes.length === 0) {
         await emit(controller, previous.bytes, true, index);
+        finished = true;
         controller.close();
         return;
       }
-      while (true) {
-        const next = await readUpTo(chunkSize);
-        if (next.eof && next.bytes.length === 0) {
-          await emit(controller, previous.bytes, true, index);
-          break;
-        }
-        await emit(controller, previous.bytes, false, index);
-        index += 1;
-        if (next.eof) {
-          await emit(controller, next.bytes, true, index);
-          break;
-        }
-        previous = next;
+      await emit(controller, previous.bytes, false, index);
+      index += 1;
+      if (next.eof) {
+        await emit(controller, next.bytes, true, index);
+        finished = true;
+        controller.close();
+        return;
       }
-      controller.close();
+      previous = next;
     },
   });
 }
 
-export async function signEnvelopeWithKey(privateKey: CryptoKey, publicKey: CryptoKey, envelope: any, context = '') {
+export async function signEnvelopeWithKey(privateKey: CryptoKey, publicKey: CryptoKey, envelope: EnvelopeJson, context = '') {
+  if (typeof context !== 'string' || context.includes('\n') || String(envelope?.recipientKeyId ?? '').includes('\n')) {
+    throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'attestation fields must not contain newlines');
+  }
   const digest = sha256Base64Url(await sha256(textEncoder.encode(serializeDocument(envelope))));
   const message = textEncoder.encode(`${ATTESTATION_SCHEMA}\n${digest}\n${envelope.recipientKeyId}\n${context}\n`);
   const signature = new Uint8Array(await subtle().sign({ name: 'Ed25519' }, privateKey, message as BufferSource));

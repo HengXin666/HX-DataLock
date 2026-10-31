@@ -20,6 +20,9 @@ data class CreateKeyringOptions(
 object HxDataLock {
     fun checkPasswordStrength(masterPassword: String): PasswordStrengthReport = PasswordStrength.check(masterPassword)
 
+    fun changedChunkIndexes(previous: Map<String, Any?>, current: Map<String, Any?>): List<Int> =
+        Stream.changedChunkIndexes(previous, current)
+
     fun createKeyring(masterPassword: String, options: CreateKeyringOptions = CreateKeyringOptions()): Keyring {
         val report = PasswordStrength.check(masterPassword)
         if (options.publicKeyring && !report.allowedForPublicKeyring) {
@@ -156,6 +159,27 @@ class SenderDataLock internal constructor(
             chunkIndex,
         )
     }
+
+    fun sealChunked(
+        input: InputStream,
+        chunkSize: Int,
+        fileId: String,
+        version: Int = 1,
+        previousManifest: Map<String, Any?>? = null,
+        previousSealed: List<ByteArray>? = null,
+    ): Pair<Map<String, Any?>, List<ByteArray>> {
+        document.verify()
+        return Stream.sealChunked(
+            document.keyId,
+            CryptoCodec.loadPublicWriteKey(document.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT),
+            input,
+            chunkSize,
+            fileId,
+            version,
+            previousManifest,
+            previousSealed,
+        )
+    }
 }
 
 class UserDataLock internal constructor(
@@ -226,6 +250,17 @@ class UserDataLock internal constructor(
             fileId,
             chunkIndex,
         )
+    }
+
+    fun openChunked(
+        manifest: Map<String, Any?>,
+        sealedChunks: List<ByteArray>,
+        output: OutputStream,
+    ): Map<String, Any?> {
+        val readKey = requireOpenReadKey()
+        keyring.verify()
+        val public = CryptoCodec.loadPublicWriteKey(keyring.raw, DataLockErrorCode.INVALID_KEYRING)
+        return Stream.openChunked(keyring.keyId, readKey, CryptoCodec.publicDer(public), manifest, sealedChunks, output)
     }
 
     fun openStream(input: InputStream, output: OutputStream): Map<String, Any?> {

@@ -1,9 +1,7 @@
 # Kotlin stream format and Android AAR
 
-Status: 交给人工
+Status: 部分落地
 
-`lockStream` / `openStream` and `:android:assembleRelease` landed. What is still open:
+Sender `sealChunked` and User `openChunked` match Python `seal_chunked` / `open_chunked`, including reuse of an unchanged chunk at the same index. The release AAR excludes BouncyCastle signature files. `docs/platforms.md` tells apps to keep `bcprov-jdk18on` and drop `bcprov-jdk15on` / SpongyCastle.
 
-- A public Kotlin wrapper for building and opening `hxdl.manifest.v1` the way Python's `seal_chunked` does. Chunk diffing exists as `Stream.changedChunkIndexes`.
-- An instrumented test on a device or emulator. The AAR was assembled with compile SDK 34; it was not installed on hardware.
-- A written app-level choice when `bcprov-jdk18on` clashes with Android's conscrypt. The platform note records the dependency; it does not pick a winner for every app.
+`CodecInstrumentedTest` and `.github/workflows/android-instrumented.yml` are in the tree. This environment started an API 34 emulator, then adb stayed offline and the guest did not finish booting, so the instrumented test was not executed here. The GitHub workflow is the run that still has to go green.

@@ -131,10 +131,10 @@ def lock_stream(
         header["chunkIndex"] = chunk_index
     header_bytes = _header_bytes(header)
     header_hash = sha256_base64url(header_bytes)
-    dst.write(STREAM_MAGIC)
-    dst.write(bytes([STREAM_VERSION]))
-    dst.write(len(header_bytes).to_bytes(4, "big"))
-    dst.write(header_bytes)
+    _write_all(dst, STREAM_MAGIC)
+    _write_all(dst, bytes([STREAM_VERSION]))
+    _write_all(dst, len(header_bytes).to_bytes(4, "big"))
+    _write_all(dst, header_bytes)
 
     index = 0
     total = 0
@@ -155,28 +155,50 @@ def lock_stream(
 
 
 def _iter_chunks(src: BinaryIO, chunk_size: int):
-    """Yield (plaintext, is_last). A short read, including an empty file, is the last chunk."""
-    previous = _read_chunk(src, chunk_size)
-    if len(previous) < chunk_size:
+    """Yield (plaintext, is_last). A short read is accumulated until EOF or chunk_size."""
+    previous, eof = _read_up_to(src, chunk_size)
+    if eof:
         yield previous, True
         return
     while True:
-        nxt = _read_chunk(src, chunk_size)
-        if nxt == b"":
+        nxt, nxt_eof = _read_up_to(src, chunk_size)
+        if nxt_eof and nxt == b"":
             yield previous, True
             return
         yield previous, False
         previous = nxt
-        if len(previous) < chunk_size:
+        if nxt_eof:
             yield previous, True
             return
 
 
+def _read_up_to(src: BinaryIO, size: int) -> tuple[bytes, bool]:
+    """Read until `size` bytes or real EOF. A short read is not treated as EOF."""
+    buf = bytearray()
+    while len(buf) < size:
+        block = src.read(size - len(buf))
+        if block is None or not isinstance(block, (bytes, bytearray)):
+            raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "stream source must yield bytes")
+        if block == b"":
+            return bytes(buf), True
+        buf.extend(block)
+    return bytes(buf), False
+
+
 def _read_chunk(src: BinaryIO, chunk_size: int) -> bytes:
-    block = src.read(chunk_size)
-    if not isinstance(block, (bytes, bytearray)):
-        raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "stream source must yield bytes")
-    return bytes(block)
+    data, _eof = _read_up_to(src, chunk_size)
+    return data
+
+
+def _write_all(dst: BinaryIO, payload: bytes) -> None:
+    view = memoryview(payload)
+    while len(view):
+        written = dst.write(view)
+        if written is None:
+            return
+        if written <= 0:
+            raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "stream destination accepted no bytes")
+        view = view[written:]
 
 
 def _write_chunk(
@@ -194,9 +216,9 @@ def _write_chunk(
         plaintext,
         stream_aad(key_id, chunk_size, index, is_last, header_hash),
     )
-    dst.write(b"\x01" if is_last else b"\x00")
-    dst.write(len(sealed).to_bytes(4, "big"))
-    dst.write(sealed)
+    _write_all(dst, b"\x01" if is_last else b"\x00")
+    _write_all(dst, len(sealed).to_bytes(4, "big"))
+    _write_all(dst, sealed)
 
 
 def open_stream(
@@ -289,7 +311,7 @@ def open_stream(
             raise DataLockError(DataLockErrorCode.TAMPERED_STREAM, "non-final stream chunk has an unexpected length")
         if is_last and len(plaintext) > chunk_size:
             raise DataLockError(DataLockErrorCode.TAMPERED_STREAM, "final stream chunk exceeds chunkSize")
-        dst.write(plaintext)
+        _write_all(dst, plaintext)
         total += len(plaintext)
         index += 1
         saw_last = is_last
@@ -307,8 +329,8 @@ def open_stream(
 
 
 def _read_exact(src: BinaryIO, size: int, what: str) -> bytes:
-    data = src.read(size)
-    if data is None or len(data) != size:
+    data, eof = _read_up_to(src, size)
+    if eof or len(data) != size:
         raise DataLockError(DataLockErrorCode.TAMPERED_STREAM, f"stream ended inside {what}")
     return data
 
@@ -321,47 +343,72 @@ def seal_chunked(
     chunk_size: int = DEFAULT_STREAM_CHUNK_SIZE,
     file_id: str,
     version: int = 1,
+    previous_manifest: dict[str, Any] | None = None,
+    previous_sealed: list[bytes] | None = None,
 ) -> tuple[dict[str, Any], list[bytes]]:
-    """Split src into independent sealed chunks plus an hxdl.manifest.v1 document."""
+    """Split src into independent sealed chunks plus an hxdl.manifest.v1 document.
+
+    When ``previous_manifest`` and ``previous_sealed`` are passed, a chunk whose
+    plaintext hash is unchanged keeps the previous sealed bytes and manifest
+    entry. ``changed_chunk_indexes`` then matches the bytes that must be uploaded.
+    """
     if not isinstance(file_id, str) or not file_id:
         raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "file_id is required")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "manifest version must be a positive integer")
     chunk_size = _require_chunk_size(chunk_size)
+    if (previous_manifest is None) ^ (previous_sealed is None):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ARGUMENT,
+            "previous_manifest and previous_sealed must be passed together",
+        )
+    previous_by_index: dict[int, tuple[dict[str, Any], bytes]] = {}
+    if previous_manifest is not None and previous_sealed is not None:
+        _validate_manifest(previous_manifest)
+        if previous_manifest["fileId"] != file_id:
+            raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, "previous manifest belongs to a different file")
+        if len(previous_sealed) != len(previous_manifest["chunks"]):
+            raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, "previous sealed chunk count does not match the manifest")
+        for entry, sealed in zip(previous_manifest["chunks"], previous_sealed, strict=True):
+            if sha256_base64url(sealed) != entry["sealedSha256"]:
+                raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, "previous sealed hash does not match the manifest")
+            previous_by_index[entry["index"]] = (entry, sealed)
     chunks: list[bytes] = []
     entries: list[dict[str, Any]] = []
     total = 0
     index = 0
     while True:
-        block = src.read(chunk_size)
-        if not isinstance(block, (bytes, bytearray)):
-            raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "stream source must yield bytes")
-        block = bytes(block)
-        if block == b"" and index > 0:
+        block, eof = _read_up_to(src, chunk_size)
+        if eof and block == b"" and index > 0:
             break
-        sealed_buf = io.BytesIO()
-        lock_stream(
-            key_id=key_id,
-            public_key=public_key,
-            src=io.BytesIO(block),
-            dst=sealed_buf,
-            chunk_size=chunk_size,
-            file_id=file_id,
-            chunk_index=index,
-        )
-        sealed = sealed_buf.getvalue()
+        digest = sha256_base64url(block)
+        reused = previous_by_index.get(index)
+        if reused is not None and reused[0]["plaintextSha256"] == digest and reused[0]["plaintextLength"] == len(block):
+            sealed = reused[1]
+        else:
+            sealed_buf = io.BytesIO()
+            lock_stream(
+                key_id=key_id,
+                public_key=public_key,
+                src=io.BytesIO(block),
+                dst=sealed_buf,
+                chunk_size=chunk_size,
+                file_id=file_id,
+                chunk_index=index,
+            )
+            sealed = sealed_buf.getvalue()
         entries.append(
             {
                 "index": index,
                 "plaintextLength": len(block),
-                "plaintextSha256": sha256_base64url(block),
+                "plaintextSha256": digest,
                 "sealedSha256": sha256_base64url(sealed),
             }
         )
         chunks.append(sealed)
         total += len(block)
         index += 1
-        if len(block) < chunk_size:
+        if eof or len(block) < chunk_size:
             break
     manifest = {
         "schema": MANIFEST_SCHEMA,
@@ -405,7 +452,7 @@ def open_chunked(
             raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, f"chunk {entry['index']} is bound to a different file")
         if len(plaintext) != entry["plaintextLength"] or sha256_base64url(plaintext) != entry["plaintextSha256"]:
             raise DataLockError(DataLockErrorCode.TAMPERED_STREAM, f"plaintext hash mismatch for chunk {entry['index']}")
-        dst.write(plaintext)
+        _write_all(dst, plaintext)
         total += len(plaintext)
     if total != manifest["totalPlaintextLength"]:
         raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, "manifest total length does not match the chunks")
@@ -419,7 +466,13 @@ def open_chunked(
 
 
 def changed_chunk_indexes(previous: dict[str, Any], current: dict[str, Any]) -> list[int]:
-    """Indexes whose sealed bytes differ. Unchanged chunks can be skipped on upload."""
+    """Indexes whose plaintext hash changed.
+
+    Unchanged chunks keep their previous sealed bytes when ``seal_chunked`` is
+    given the previous manifest. A manifest that is not signed can still drop a
+    tail chunk and shrink ``totalPlaintextLength``; that truncation is not
+    visible to chunk AEAD. Sign the manifest to detect it.
+    """
     _validate_manifest(previous)
     _validate_manifest(current)
     if previous["fileId"] != current["fileId"]:
@@ -445,6 +498,8 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
     for expected, entry in enumerate(chunks):
         if not isinstance(entry, dict) or entry.get("index") != expected:
             raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, "manifest chunk indexes must be contiguous from 0")
-        for field in ("plaintextLength", "plaintextSha256", "sealedSha256"):
-            if field not in entry:
+        if not isinstance(entry.get("plaintextLength"), int) or isinstance(entry.get("plaintextLength"), bool):
+            raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, "manifest plaintextLength must be an integer")
+        for field in ("plaintextSha256", "sealedSha256"):
+            if not isinstance(entry.get(field), str) or not entry[field]:
                 raise DataLockError(DataLockErrorCode.INVALID_MANIFEST, f"manifest chunk is missing {field}")

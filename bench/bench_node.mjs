@@ -1,3 +1,4 @@
+// Run `npm run build` in sdk/node first. This script imports the compiled dist, which is gitignored.
 import { performance } from 'node:perf_hooks';
 import { createKeyring, makeUserDataLock } from '../sdk/node/dist/index.js';
 

@@ -16,12 +16,13 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export function base64ToBytes(text: string): Uint8Array {
-  if (text.length === 0 || text.length % 4 !== 0) {
+  if (text.length === 0) return new Uint8Array(0);
+  if (text.length % 4 !== 0) {
     throw new Error('invalid base64');
   }
-  const decoded = bytesToBase64(decodeUnchecked(text));
-  if (decoded !== text) throw new Error('invalid base64');
-  return decodeUnchecked(text);
+  const decoded = decodeUnchecked(text);
+  if (bytesToBase64(decoded) !== text) throw new Error('invalid base64');
+  return decoded;
 }
 
 function decodeUnchecked(text: string): Uint8Array {

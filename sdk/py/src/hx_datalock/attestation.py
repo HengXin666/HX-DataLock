@@ -11,6 +11,8 @@ HMAC hxdl.signedManifest.v1 prototype remains a script and is not this format.
 
 from __future__ import annotations
 
+import json
+import warnings
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -41,9 +43,15 @@ def attestation_key_id(public_spki: bytes) -> str:
 def attestation_message(envelope_sha256: str, recipient_key_id: str, context: str) -> bytes:
     if "\n" in context or "\n" in envelope_sha256 or "\n" in recipient_key_id:
         raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "attestation fields must not contain newlines")
-    return (
-        f"{ATTESTATION_SCHEMA}\n{envelope_sha256}\n{recipient_key_id}\n{context}\n"
-    ).encode("utf-8")
+    try:
+        return (
+            f"{ATTESTATION_SCHEMA}\n{envelope_sha256}\n{recipient_key_id}\n{context}\n"
+        ).encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ATTESTATION,
+            "attestation message is not valid UTF-8",
+        ) from exc
 
 
 def envelope_sha256(envelope: DataEnvelope) -> str:
@@ -143,7 +151,7 @@ def sign_manifest(private_key: Ed25519PrivateKey, payload: dict[str, Any], *, is
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    signature = private_key.sign(dumps_stable_json(payload).encode("utf-8"))
+    signature = private_key.sign(signed_manifest_bytes(issuer, payload))
     return {
         "schema": SIGNED_MANIFEST_V2_SCHEMA,
         "signedAt": utc_now(),
@@ -180,7 +188,13 @@ def verify_signed_manifest(
     key_id = attestation_key_id(public_spki)
     if signer.get("keyId") != key_id:
         raise DataLockError(DataLockErrorCode.INVALID_ATTESTATION, "signed manifest signer keyId does not match the public key")
-    if expected_signer_key_id is not None and key_id != expected_signer_key_id:
+    if expected_signer_key_id is None:
+        warnings.warn(
+            "verify_signed_manifest has no expected_signer_key_id. Any matching Ed25519 key will be accepted.",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif key_id != expected_signer_key_id:
         raise DataLockError(DataLockErrorCode.INVALID_ATTESTATION, "signed manifest signer is not the expected key")
     signature = from_b64(
         document.get("signature"),
@@ -195,14 +209,31 @@ def verify_signed_manifest(
     if not isinstance(loaded, Ed25519PublicKey):
         raise DataLockError(DataLockErrorCode.UNSUPPORTED_ALGORITHM, "signed manifest public key is not Ed25519")
     try:
-        loaded.verify(signature, dumps_stable_json(payload).encode("utf-8"))
+        loaded.verify(signature, signed_manifest_bytes(str(document.get("issuer") or ""), payload))
     except InvalidSignature as exc:
         raise DataLockError(DataLockErrorCode.INVALID_ATTESTATION, "signed manifest signature is invalid") from exc
+    except UnicodeEncodeError as exc:
+        raise DataLockError(DataLockErrorCode.INVALID_ATTESTATION, "signed manifest payload is not valid UTF-8") from exc
     return payload
 
 
+def signed_manifest_bytes(issuer: str, payload: dict[str, Any]) -> bytes:
+    """Lexicographic JSON so integer-looking keys do not change order across languages.
+
+    The signed bytes cover both issuer and payload.
+    """
+    try:
+        text = json.dumps({"issuer": issuer, "payload": payload}, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        return text.encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise DataLockError(DataLockErrorCode.INVALID_ATTESTATION, "signed manifest is not canonical UTF-8 JSON") from exc
+
+
 def parse_attestation_private_key(pkcs8: bytes) -> Ed25519PrivateKey:
-    loaded = serialization.load_der_private_key(pkcs8, password=None)
+    try:
+        loaded = serialization.load_der_private_key(pkcs8, password=None)
+    except (TypeError, ValueError) as exc:
+        raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "attestation private key is not a PKCS8 Ed25519 key") from exc
     if not isinstance(loaded, Ed25519PrivateKey):
         raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "private key is not Ed25519")
     return loaded

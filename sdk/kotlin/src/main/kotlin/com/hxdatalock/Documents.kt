@@ -102,10 +102,17 @@ data class DataEnvelope(val raw: LinkedHashMap<String, Any?>) {
 
     companion object {
         fun parse(text: String): DataEnvelope {
-            if (text.isEmpty()) {
-                throw DataLockException(DataLockErrorCode.INVALID_ARGUMENT, "Data Envelope JSON must be a string")
+            val raw = try {
+                StableJson.parse(text)
+            } catch (ex: DataLockException) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid", ex)
+            } catch (ex: Exception) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid", ex)
             }
-            val envelope = DataEnvelope(StableJson.parse(text))
+            if (raw["schema"] == null && !raw.containsKey("schema")) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid")
+            }
+            val envelope = DataEnvelope(raw)
             envelope.verify()
             return envelope
         }

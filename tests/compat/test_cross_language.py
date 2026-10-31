@@ -72,6 +72,7 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
     )
     public_key_id = json.loads(public_path.read_text(encoding="utf-8"))["publicWriteKey"]["keyId"]
 
+    swift_bin = Path(os.environ.get("HXDL_SWIFT_BIN", "sdk/swift/.build/debug/hxdl-swift"))
     lock_commands = {
         "python": lambda plain_path, envelope_path: subprocess.run(
             [
@@ -109,6 +110,22 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
             check=True,
         ),
     }
+    if swift_bin.is_file():
+        lock_commands["swift"] = lambda plain_path, envelope_path: subprocess.run(
+            [
+                str(swift_bin),
+                "lock",
+                "--public",
+                str(public_path),
+                "--expect-key-id",
+                public_key_id,
+                "--in",
+                str(plain_path),
+                "--out",
+                str(envelope_path),
+            ],
+            check=True,
+        )
     open_commands = {
         "python": lambda envelope_path, opened_path: subprocess.run(
             [
@@ -148,6 +165,23 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
             check=True,
         ),
     }
+    if swift_bin.is_file():
+        open_commands["swift"] = lambda envelope_path, opened_path: subprocess.run(
+            [
+                str(swift_bin),
+                "open",
+                "--keyring",
+                str(keyring_path),
+                "--in",
+                str(envelope_path),
+                "--out",
+                str(opened_path),
+                "--password-env",
+                "HXDL_TEST_PASSWORD",
+            ],
+            check=True,
+            env=env,
+        )
 
     for locker_name, lock in lock_commands.items():
         plain_path = tmp_path / f"{locker_name}.txt"

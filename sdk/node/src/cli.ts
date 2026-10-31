@@ -5,7 +5,9 @@ import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_SCRYPT_N, RECOMMENDED_MIN_SCRYPT_N } from './constants.js';
 import { DataLockError, DataLockErrorCode } from './errors.js';
-import { checkPasswordStrength } from './password-strength.js';
+import { checkPasswordStrength, type PasswordStrengthReport } from './password-strength.js';
+
+type CliOptions = Record<string, string>;
 import { PublicKeyDocument } from './documents.js';
 import {
   createKeyring,
@@ -32,9 +34,9 @@ Usage:
 `);
 }
 
-function parseArgs(argv: any) {
+function parseArgs(argv: string[]) {
   const [command, ...rest] = argv;
-  const options: Record<string, string | boolean> = {};
+    const options: CliOptions = {};
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
     if (!token.startsWith('--')) {
@@ -43,7 +45,7 @@ function parseArgs(argv: any) {
     const key = token.slice(2);
     const next = rest[i + 1];
     if (!next || next.startsWith('--')) {
-      options[key] = true;
+      options[key] = 'true';
     } else {
       options[key] = next;
       i += 1;
@@ -52,7 +54,7 @@ function parseArgs(argv: any) {
   return { command, options };
 }
 
-async function readPassword(options: any, prompt = 'Master password: '): Promise<string> {
+async function readPassword(options: CliOptions, prompt = 'Master password: '): Promise<string> {
   if (options['password-stdin']) {
     const value = await new Promise((resolvePassword) => {
       let data = '';
@@ -91,7 +93,7 @@ async function readPassword(options: any, prompt = 'Master password: '): Promise
       input.off('data', onData);
       output.write('\n');
     }
-    function onData(chunk: any) {
+    function onData(chunk: string) {
       if (chunk === '\u0003') {
         cleanup();
         rejectPassword(new Error('Password input cancelled'));
@@ -112,13 +114,13 @@ async function readPassword(options: any, prompt = 'Master password: '): Promise
   });
 }
 
-function reportPasswordStrength(report: any) {
+function reportPasswordStrength(report: PasswordStrengthReport) {
   console.log(`Master Password strength: ${report.level} allowed=${report.allowed} entropyBits=${report.estimatedEntropyBits} score=${report.score}`);
   for (const warning of report.warnings || []) console.log(`  warning: ${warning}`);
   for (const suggestion of report.suggestions || []) console.log(`  suggestion: ${suggestion}`);
 }
 
-async function commandInit(options: any) {
+async function commandInit(options: CliOptions) {
   if (options['public-keyring']) {
     console.error(
       'DANGER: this Keyring is being created for public storage. Anyone who downloads it can guess the Master Password offline. The password must measure at least 80 bits. Prefer a private Keyring and publish only the Public Key Document.',
@@ -140,14 +142,14 @@ async function commandInit(options: any) {
     }
   }
   const scryptN = Number(options['scrypt-n'] || DEFAULT_SCRYPT_N);
-  if (scryptN < RECOMMENDED_MIN_SCRYPT_N && options['allow-low-scrypt-n'] !== true) {
+  if (scryptN < RECOMMENDED_MIN_SCRYPT_N && options['allow-low-scrypt-n'] !== 'true') {
     console.error(`warning: scrypt N=${scryptN} is below the create-time minimum ${RECOMMENDED_MIN_SCRYPT_N}`);
   }
   const keyring = createKeyring(password, {
     scryptN,
-    allowWeakPassword: options['allow-weak-password'] === true || options['allow-weak'] === true,
-    allowLowScryptN: options['allow-low-scrypt-n'] === true,
-    publicKeyring: options['public-keyring'] === true,
+    allowWeakPassword: options['allow-weak-password'] === 'true' || options['allow-weak'] === 'true',
+    allowLowScryptN: options['allow-low-scrypt-n'] === 'true',
+    publicKeyring: options['public-keyring'] === 'true',
     onPasswordReport: reportPasswordStrength,
   });
   const outPath = options.keyring || options.out || 'keyring.hxdl.json';
@@ -157,7 +159,7 @@ async function commandInit(options: any) {
   console.log('Keep this Keyring on private local storage. Do not commit it to public GitHub or other public storage. Publish a Public Key Document for senders.');
 }
 
-function commandExportPublic(options: any) {
+function commandExportPublic(options: CliOptions) {
   const document = exportPublicKeyDocument(loadKeyring(options.keyring || 'keyring.hxdl.json'));
   if (options.out) {
     document.write(options.out);
@@ -166,12 +168,12 @@ function commandExportPublic(options: any) {
   console.log(`Write Key ID: ${document.keyId}`);
 }
 
-function commandLock(options: any) {
+function commandLock(options: CliOptions) {
   if (!options.public || !options.in || !options.out) {
     throw new Error('lock requires --public, --in, and --out');
   }
   const document = PublicKeyDocument.read(options.public);
-  const allowUnpinned = options['allow-unpinned-public-key'] === true || options['allow-unpinned-key'] === true;
+  const allowUnpinned = options['allow-unpinned-public-key'] === 'true' || options['allow-unpinned-key'] === 'true';
   if (!options['expect-key-id'] && !allowUnpinned) {
     throw new DataLockError(
       DataLockErrorCode.UNPINNED_PUBLIC_KEY,
@@ -185,7 +187,7 @@ function commandLock(options: any) {
   console.log(`Data Envelope written: ${options.out}`);
 }
 
-async function commandOpen(options: any) {
+async function commandOpen(options: CliOptions) {
   if (!options.in || !options.out) {
     throw new Error('open requires --in and --out');
   }
@@ -196,12 +198,12 @@ async function commandOpen(options: any) {
   console.log(`Plaintext written: ${options.out}`);
 }
 
-function commandVerifyKeyring(options: any) {
+function commandVerifyKeyring(options: CliOptions) {
   const keyring = verifyKeyringFile(options.keyring || 'keyring.hxdl.json', { requireStableJson: true });
   console.log(`Valid Keyring: ${keyring.keyId}`);
 }
 
-function commandVerifyPublic(options: any) {
+function commandVerifyPublic(options: CliOptions) {
   if (!options.public) {
     throw new Error('verify-public requires --public');
   }
@@ -209,11 +211,11 @@ function commandVerifyPublic(options: any) {
   console.log(`Valid Public Key Document: ${document.keyId}`);
 }
 
-function emitMeasurement(operation: any, sizeBytes: any, elapsedMs: any) {
+function emitMeasurement(operation: string, sizeBytes: number, elapsedMs: number) {
   console.log(JSON.stringify({ operation, sizeBytes, elapsedMs: Math.round(elapsedMs * 1000) / 1000 }));
 }
 
-async function commandBench(options: any) {
+async function commandBench(options: CliOptions) {
   const sizes = String(options.sizes || '1048576,10485760,26214400').split(',').map((item) => Number(item));
   const keyring = loadKeyring(options.keyring || 'keyring.hxdl.json');
   const started = performance.now();

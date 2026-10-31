@@ -1,10 +1,10 @@
-export const KEYRING_SCHEMA = 'hxdl.keyring.v1';
-export const PUBLIC_KEY_SCHEMA = 'hxdl.publicKey.v1';
-export const ENVELOPE_SCHEMA = 'hxdl.envelope.v1';
-export const STREAM_SCHEMA = 'hxdl.stream.v1';
-export const MANIFEST_SCHEMA = 'hxdl.manifest.v1';
-export const ATTESTATION_SCHEMA = 'hxdl.attestation.v1';
-export const SIGNED_MANIFEST_V2_SCHEMA = 'hxdl.signedManifest.v2';
+export const KEYRING_SCHEMA = 'hxdl.keyring.v1' as const;
+export const PUBLIC_KEY_SCHEMA = 'hxdl.publicKey.v1' as const;
+export const ENVELOPE_SCHEMA = 'hxdl.envelope.v1' as const;
+export const STREAM_SCHEMA = 'hxdl.stream.v1' as const;
+export const MANIFEST_SCHEMA = 'hxdl.manifest.v1' as const;
+export const ATTESTATION_SCHEMA = 'hxdl.attestation.v1' as const;
+export const SIGNED_MANIFEST_V2_SCHEMA = 'hxdl.signedManifest.v2' as const;
 export const STREAM_MAGIC = new Uint8Array([0x48, 0x58, 0x44, 0x4c]);
 export const DEFAULT_STREAM_CHUNK_SIZE = 1024 * 1024;
 export const MIN_STREAM_CHUNK_SIZE = 1;
@@ -32,4 +32,4 @@ export const ENVELOPE_ALG = {
   kem: 'X25519',
   kdf: 'HKDF-SHA256',
   aead: 'AES-256-GCM',
-};
+} as const;

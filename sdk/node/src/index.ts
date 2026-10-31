@@ -11,6 +11,7 @@ export {
   verifyKeyringFile,
   verifyPublicKeyDocumentFile,
   rewrapKeyring,
+  rewrap_keyring,
   verifyPublicKeyDocumentKeyId,
 } from './sdk.js';
 // Document classes and the data locks are part of the public surface: the
@@ -26,4 +27,25 @@ export {
   verifyAttestation,
   verifySignedManifest,
 } from './attestation.js';
-export { changedChunkIndexes, lockStream, openStream } from './stream.js';
+export { changedChunkIndexes, lockStream, openChunked, openStream, sealChunked } from './stream.js';
+export type {
+  AttestationJson,
+  AttestationVerifyOptions,
+  ByteCursor,
+  ByteSink,
+  ChunkManifest,
+  CreateKeyringOptions,
+  EnvelopeInspection,
+  EnvelopeJson,
+  KeyringJson,
+  ManifestChunk,
+  PasswordStrengthReport,
+  PublicKeyDocumentJson,
+  ScryptKdf,
+  SealChunkedOptions,
+  SenderOptions,
+  SignedManifestJson,
+  StreamInfo,
+  StreamLockOptions,
+  UserDataLockOptions,
+} from './types.js';

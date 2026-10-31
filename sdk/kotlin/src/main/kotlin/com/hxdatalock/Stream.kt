@@ -169,6 +169,120 @@ internal object Stream {
         )
     }
 
+    fun sealChunked(
+        keyId: String,
+        publicKey: X25519PublicKeyParameters,
+        src: InputStream,
+        chunkSize: Int,
+        fileId: String,
+        version: Int,
+        previousManifest: Map<String, Any?>? = null,
+        previousSealed: List<ByteArray>? = null,
+    ): Pair<Map<String, Any?>, List<ByteArray>> {
+        requireChunkSize(chunkSize)
+        if ((previousManifest == null) != (previousSealed == null)) {
+            throw DataLockException(DataLockErrorCode.INVALID_ARGUMENT, "previous manifest and sealed chunks must be passed together")
+        }
+        val previousByIndex = mutableMapOf<Int, Pair<ChunkEntry, ByteArray>>()
+        if (previousManifest != null && previousSealed != null) {
+            if (previousManifest["fileId"] != fileId) {
+                throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "previous manifest belongs to a different file")
+            }
+            val entries = chunkList(previousManifest)
+            if (entries.size != previousSealed.size) {
+                throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "previous sealed chunk count does not match the manifest")
+            }
+            entries.forEachIndexed { index, entry ->
+                val sealed = previousSealed[index]
+                if (CryptoCodec.sha256Base64Url(sealed) != entry.sealedSha256) {
+                    throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "previous sealed hash does not match the manifest")
+                }
+                previousByIndex[entry.index] = entry to sealed
+            }
+        }
+        val chunks = mutableListOf<ByteArray>()
+        val manifestChunks = mutableListOf<Map<String, Any?>>()
+        var total = 0
+        var index = 0
+        while (true) {
+            val (block, eof) = readUpTo(src, chunkSize)
+            if (eof && block.isEmpty() && index > 0) break
+            val digest = CryptoCodec.sha256Base64Url(block)
+            val reused = previousByIndex[index]
+            val sealed = if (reused != null && reused.first.plaintextSha256 == digest && reused.first.plaintextLength == block.size) {
+                reused.second
+            } else {
+                val out = java.io.ByteArrayOutputStream()
+                lock(keyId, publicKey, java.io.ByteArrayInputStream(block), out, chunkSize, fileId, index)
+                out.toByteArray()
+            }
+            manifestChunks.add(
+                mapOf(
+                    "index" to index,
+                    "plaintextLength" to block.size,
+                    "plaintextSha256" to digest,
+                    "sealedSha256" to CryptoCodec.sha256Base64Url(sealed),
+                ),
+            )
+            chunks.add(sealed)
+            total += block.size
+            index += 1
+            if (eof || block.size < chunkSize) break
+        }
+        val manifest = mapOf(
+            "schema" to MANIFEST_SCHEMA,
+            "fileId" to fileId,
+            "version" to version,
+            "chunkSize" to chunkSize,
+            "totalPlaintextLength" to total,
+            "chunks" to manifestChunks,
+        )
+        return manifest to chunks
+    }
+
+    fun openChunked(
+        keyId: String,
+        readKey: X25519PrivateKeyParameters,
+        recipientSpki: ByteArray,
+        manifest: Map<String, Any?>,
+        sealedChunks: List<ByteArray>,
+        dst: OutputStream,
+    ): Map<String, Any?> {
+        val entries = chunkList(manifest)
+        if (entries.size != sealedChunks.size) {
+            throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "sealed chunk count does not match the manifest")
+        }
+        var total = 0
+        entries.forEachIndexed { index, entry ->
+            val sealed = sealedChunks[index]
+            if (CryptoCodec.sha256Base64Url(sealed) != entry.sealedSha256) {
+                throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "sealed hash mismatch for chunk ${entry.index}")
+            }
+            val opened = java.io.ByteArrayOutputStream()
+            val info = open(keyId, readKey, recipientSpki, java.io.ByteArrayInputStream(sealed), opened)
+            val plaintext = opened.toByteArray()
+            if (info["fileId"] != manifest["fileId"] || info["chunkIndex"] != entry.index) {
+                throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "chunk ${entry.index} is bound to a different file")
+            }
+            if (plaintext.size != entry.plaintextLength || CryptoCodec.sha256Base64Url(plaintext) != entry.plaintextSha256) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_STREAM, "plaintext hash mismatch for chunk ${entry.index}")
+            }
+            dst.write(plaintext)
+            total += plaintext.size
+        }
+        val expected = manifest["totalPlaintextLength"] as? Int
+        if (expected != null && expected != total) {
+            throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "manifest total length does not match the chunks")
+        }
+        return mapOf(
+            "schema" to MANIFEST_SCHEMA,
+            "fileId" to manifest["fileId"],
+            "version" to manifest["version"],
+            "plaintextLength" to total,
+            "chunkCount" to entries.size,
+        )
+    }
+
     fun changedChunkIndexes(previous: Map<String, Any?>, current: Map<String, Any?>): List<Int> {
         val previousChunks = chunkList(previous)
         val currentChunks = chunkList(current)
@@ -179,7 +293,7 @@ internal object Stream {
         return currentChunks.filter { previousPlain[it.index] != it.plaintextSha256 }.map { it.index }
     }
 
-    private data class ChunkEntry(val index: Int, val plaintextSha256: String)
+    private data class ChunkEntry(val index: Int, val plaintextSha256: String, val sealedSha256: String, val plaintextLength: Int)
 
     private fun chunkList(manifest: Map<String, Any?>): List<ChunkEntry> {
         if (manifest["schema"] != MANIFEST_SCHEMA) {
@@ -194,7 +308,15 @@ internal object Stream {
             if (index != expected) {
                 throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "manifest chunk indexes must be contiguous from 0")
             }
-            ChunkEntry(index, entry["plaintextSha256"] as String)
+            ChunkEntry(
+                index,
+                entry["plaintextSha256"] as? String
+                    ?: throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "manifest chunk is missing plaintextSha256"),
+                entry["sealedSha256"] as? String
+                    ?: throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "manifest chunk is missing sealedSha256"),
+                (entry["plaintextLength"] as? Number)?.toInt()
+                    ?: throw DataLockException(DataLockErrorCode.INVALID_MANIFEST, "manifest chunk is missing plaintextLength"),
+            )
         }
     }
 

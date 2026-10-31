@@ -11,4 +11,4 @@ Two additions stay outside the v1 envelope schema:
 
 Callers must already know the signer key they trust. There is no automatic trust discovery.
 
-The CLI `lock` command requires `--expect-key-id` unless `--allow-unpinned-key` is set. SDK sender construction still accepts a missing pin so existing callers keep working, and it warns. `require_expected_key_id` turns that warning into `UNPINNED_PUBLIC_KEY`.
+Python, TypeScript, and Kotlin sender construction require `expected_key_id` unless the caller passes the explicit unpinned opt-out. A missing pin is `UNPINNED_PUBLIC_KEY`, not a warning. The CLI accepts `--allow-unpinned-public-key` and the alias `--allow-unpinned-key`.

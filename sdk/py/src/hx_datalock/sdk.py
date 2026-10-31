@@ -328,6 +328,7 @@ def rewrap_keyring(
     on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
     allow_weak_password: bool = False,
     allow_weak: bool = False,
+    allow_low_scrypt_n: bool = False,
     public_keyring: bool = False,
 ) -> Keyring:
     """Wrap the same Read Key under a new Master Password.
@@ -344,6 +345,11 @@ def rewrap_keyring(
     report = check_password_strength(new_password)
     if on_password_report is not None:
         on_password_report(report)
+    if public_keyring:
+        warnings.warn(
+            "DANGER: rewrapping a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.",
+            stacklevel=2,
+        )
     if public_keyring and not report.get("allowedForPublicKeyring"):
         raise DataLockError(
             DataLockErrorCode.WEAK_MASTER_PASSWORD,
@@ -361,10 +367,13 @@ def rewrap_keyring(
         encryption_algorithm=serialization.NoEncryption(),
     )
     previous_kdf = keyring.raw["encryptedReadKey"]["kdf"]
+    next_n = previous_kdf["N"]
+    if next_n < MIN_CREATE_SCRYPT_N and not allow_low_scrypt_n:
+        next_n = MIN_CREATE_SCRYPT_N
     kdf = {
         "name": "scrypt",
         "salt": b64(secrets.token_bytes(32)),
-        "N": previous_kdf["N"],
+        "N": next_n,
         "r": previous_kdf["r"],
         "p": previous_kdf["p"],
         "keyLength": KEY_LENGTH,

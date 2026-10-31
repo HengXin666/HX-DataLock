@@ -41,6 +41,14 @@ tasks.register<JavaExec>("runOpenExample") {
     args = (project.findProperty("exampleArgs") as String? ?: "").split("|").filter { it.isNotEmpty() }
 }
 
+tasks.register<JavaExec>("runManifestExample") {
+    group = "examples"
+    dependsOn("compileExamplesKotlin")
+    classpath = sourceSets["examples"].runtimeClasspath
+    mainClass.set("ManifestRoundTripKt")
+    args = (project.findProperty("exampleArgs") as String? ?: "").split("|").filter { it.isNotEmpty() }
+}
+
 tasks.register<JavaExec>("runLockExample") {
     group = "examples"
     dependsOn("compileExamplesKotlin")

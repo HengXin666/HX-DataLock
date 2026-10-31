@@ -10,6 +10,19 @@ android {
     defaultConfig {
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/*.SF",
+                "META-INF/*.DSA",
+                "META-INF/*.RSA",
+                "META-INF/BCKEY.SF",
+                "META-INF/BCKEY.DSA",
+            )
+        }
     }
 
     compileOptions {
@@ -31,4 +44,6 @@ dependencies {
     implementation("org.bouncycastle:bcpkix-jdk18on:1.81")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("com.nulab-inc:zxcvbn:1.8.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

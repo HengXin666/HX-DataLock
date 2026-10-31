@@ -1,0 +1,46 @@
+name: Swift SDK
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  swift:
+    name: Swift package tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0.3"
+      - name: Point the linker at libstdc++
+        run: |
+          gcc_dir="$(echo /usr/lib/gcc/x86_64-linux-gnu/* | awk '{print $1}')"
+          cxx="$(ls -d /usr/include/c++/* | head -1)"
+          triple="$(ls -d /usr/include/x86_64-linux-gnu/c++/* | head -1)"
+          echo "LIBRARY_PATH=${gcc_dir}" >> "$GITHUB_ENV"
+          echo "CPLUS_INCLUDE_PATH=${cxx}:${triple}" >> "$GITHUB_ENV"
+      - name: Test and build the package
+        working-directory: sdk/swift
+        run: swift test && swift build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: astral-sh/setup-uv@v5
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.2"
+      - name: Install Node SDK dependencies
+        working-directory: sdk/node
+        run: npm ci && npm run build
+      - name: Cross-SDK envelope test including Swift
+        run: uv run pytest tests/compat/test_cross_language.py::test_each_sdk_can_open_envelopes_locked_by_every_sdk -q

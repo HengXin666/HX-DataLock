@@ -61,7 +61,7 @@ uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out messag
 | --- | --- | --- |
 | Python | 完整 SDK、Sender DataLock、User DataLock、CLI、本地文件助手 | [sdk/py/README.md](sdk/py/README.md) |
 | Node/TypeScript | 完整 SDK、Sender DataLock、User DataLock、CLI、本地文件助手 | [sdk/node/README.md](sdk/node/README.md) |
-| Kotlin/JVM | 用户侧与 Sender，可从字符串解析 Envelope。没有 AAR，也没有 iOS 实现 | [sdk/kotlin/README.md](sdk/kotlin/README.md) |
+| Kotlin/JVM 与 Android AAR | 可打开 Envelope，可用 Keyring 本地加密，也有 Sender、字符串解析和 stream。iOS 走 Swift 包 | [sdk/kotlin/README.md](sdk/kotlin/README.md) |
 
 ## 设计与规范
 

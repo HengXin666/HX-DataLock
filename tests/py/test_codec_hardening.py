@@ -128,10 +128,19 @@ def test_stream_round_trip_and_rejects_truncation_and_reorder() -> None:
         user.openStream(io.BytesIO(raw[:-20]), io.BytesIO())
     assert truncated.value.code is DataLockErrorCode.TAMPERED_STREAM
 
-    swapped = bytearray(raw)
-    swapped[-8] ^= 0x01
+    header_len = int.from_bytes(raw[5:9], "big")
+    offset = 9 + header_len
+    spans: list[tuple[int, int]] = []
+    while offset < len(raw):
+        body_len = int.from_bytes(raw[offset + 1 : offset + 5], "big")
+        nxt = offset + 5 + body_len
+        spans.append((offset, nxt))
+        offset = nxt
+    assert len(spans) >= 2
+    first, second = spans[0], spans[1]
+    reordered_bytes = raw[: first[0]] + raw[second[0] : second[1]] + raw[first[0] : first[1]] + raw[second[1] :]
     with pytest.raises(DataLockError) as reordered:
-        user.openStream(io.BytesIO(bytes(swapped)), io.BytesIO())
+        user.openStream(io.BytesIO(reordered_bytes), io.BytesIO())
     assert reordered.value.code is DataLockErrorCode.TAMPERED_STREAM
 
 

@@ -34,11 +34,15 @@ def _read_password(password_env: str | None, *, confirm: bool = False, password_
     if password_env and password_stdin:
         _fail("INVALID_ARGUMENT", "Pass only one of --password-env and --password-stdin")
     if password_stdin:
-        value = sys.stdin.readline()
-        if value.endswith("\n"):
-            value = value[:-1]
-        if value.endswith("\r"):
-            value = value[:-1]
+        raw = sys.stdin.buffer.readline()
+        if raw.endswith(b"\n"):
+            raw = raw[:-1]
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+        try:
+            value = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            _fail("INVALID_ARGUMENT", "Master Password on stdin is not UTF-8")
         if not value:
             _fail("MISSING_MASTER_PASSWORD", "stdin did not contain a Master Password")
         return value

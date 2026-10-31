@@ -201,6 +201,37 @@ class HxDataLockTest {
     }
 
     @Test
+    fun sealChunkedReusesUnchangedChunksAndRejectsABadPin() {
+        val password = "correct horse battery staple for hx datalock"
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
+        val document = HxDataLock.exportPublicKeyDocument(keyring)
+        val mismatch = assertFailsWith<DataLockException> {
+            HxDataLock.makeSenderDataLock(document, expectedKeyId = "x25519:not-the-key")
+        }
+        assertEquals(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, mismatch.code)
+        val unpinned = assertFailsWith<DataLockException> {
+            HxDataLock.makeSenderDataLock(document)
+        }
+        assertEquals(DataLockErrorCode.UNPINNED_PUBLIC_KEY, unpinned.code)
+        val sender = HxDataLock.makeSenderDataLock(document, expectedKeyId = document.keyId)
+        val first = sender.sealChunked(ByteArrayInputStream(ByteArray(80) { 1 }), 40, "file-a", 1)
+        val second = sender.sealChunked(
+            ByteArrayInputStream(ByteArray(40) { 1 } + ByteArray(40) { 2 }),
+            40,
+            "file-a",
+            2,
+            first.first,
+            first.second,
+        )
+        assertEquals(listOf(1), HxDataLock.changedChunkIndexes(first.first, second.first))
+        assertContentEquals(first.second[0], second.second[0])
+        val user = HxDataLock.makeUserDataLock(keyring, password)
+        val opened = ByteArrayOutputStream()
+        user.openChunked(second.first, second.second, opened)
+        assertEquals(80, opened.size())
+    }
+
+    @Test
     fun senderDataLockIsPartOfThePublicSurface() {
         val publicMembers = HxDataLock::class.java.methods.map { it.name }.toSet()
 

@@ -13,7 +13,9 @@
       const password = "correct horse battery staple for hx datalock";
       const keyring = await createKeyring(password, { scryptN: 16384 });
       const publicDocument = exportPublicKeyDocument(keyring);
-      const envelope = await lockText(publicDocument, "browser hello");
+      const envelope = await lockText(publicDocument, "browser hello", {
+        expectedKeyId: publicDocument.publicWriteKey.keyId,
+      });
       const opened = await openText(keyring, password, envelope);
       document.getElementById("out").textContent = `${opened}\n${publicDocument.publicWriteKey.keyId}`;
     </script>

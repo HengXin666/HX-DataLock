@@ -10,7 +10,7 @@
     "sourceMap": true,
     "strict": true,
     "noImplicitAny": true,
-    "useUnknownInCatchVariables": false,
+    "useUnknownInCatchVariables": true,
     "noEmitOnError": false,
     "skipLibCheck": true
   },

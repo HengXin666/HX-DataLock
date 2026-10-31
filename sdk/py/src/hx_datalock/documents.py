@@ -7,7 +7,13 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import x25519
 
-from .constants import ENVELOPE_SCHEMA, KEYRING_SCHEMA, MAX_PUBLIC_KEY_JSON_BYTES, PUBLIC_KEY_SCHEMA
+from .constants import (
+    ENVELOPE_SCHEMA,
+    KEYRING_SCHEMA,
+    MAX_ENVELOPE_JSON_BYTES,
+    MAX_PUBLIC_KEY_JSON_BYTES,
+    PUBLIC_KEY_SCHEMA,
+)
 from .crypto_codec import (
     require_creation_time,
     unwrap_read_key,
@@ -74,6 +80,8 @@ class DataEnvelope:
         """Parse and verify a Data Envelope from a JSON string. Does not decrypt."""
         if not isinstance(text, str):
             raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "Data Envelope JSON must be a string")
+        if len(text.encode("utf-8")) > MAX_ENVELOPE_JSON_BYTES:
+            raise DataLockError(DataLockErrorCode.OVERSIZED_FILE, "JSON document exceeds the v1 size limit")
         try:
             raw = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -91,7 +99,8 @@ class DataEnvelope:
         return document
 
     def verify(self) -> None:
-        if self._decoded is not None:
+        ciphertext = self.raw.get("ciphertext") if isinstance(self.raw, dict) else None
+        if self._decoded is not None and getattr(self, "_decoded_ciphertext", None) == ciphertext:
             return
         raw = self.raw
         if raw.get("schema") != ENVELOPE_SCHEMA:
@@ -102,6 +111,7 @@ class DataEnvelope:
         validate_envelope_alg(raw)
         decoded = validate_envelope_fields(raw)
         object.__setattr__(self, "_decoded", decoded)
+        object.__setattr__(self, "_decoded_ciphertext", ciphertext)
 
     def decoded_fields(self) -> dict[str, bytes]:
         self.verify()
@@ -109,7 +119,10 @@ class DataEnvelope:
         return self._decoded
 
     def inspect(self) -> dict[str, Any]:
-        """Return authenticated-structure metadata without decrypting."""
+        """Return structural metadata without decrypting.
+
+        createdAt is not in the AAD. Trust it only after a successful open.
+        """
         decoded = self.decoded_fields()
         return {
             "schema": self.raw["schema"],

@@ -18,7 +18,10 @@ hxdl.attestation.v1
 {envelopeSha256}
 {recipientKeyId}
 {context}
+
 ```
+
+The message ends with a line feed after `{context}`. `envelopeSha256`, `recipientKeyId`, and `context` must not contain a newline; the SDKs reject those inputs. `hxdl.signedManifest.v2` signs canonical JSON of `{issuer, payload}` with keys sorted lexicographically, so the issuer is covered and integer-looking keys do not change order between languages. Without `expected_signer_key_id`, verification warns and accepts any key that matches the embedded public key.
 
 `envelopeSha256` is unpadded base64url of SHA-256 over the stable JSON of the envelope, including its trailing newline. The signature is Ed25519 over that message. The signer public key is SPKI, and `signer.keyId` is `ed25519:` plus the first 22 characters of unpadded base64url SHA-256 of that SPKI.
 

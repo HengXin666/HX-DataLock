@@ -93,7 +93,7 @@ A Data Envelope that encrypts one complete byte sequence as a single authenticat
 _Avoid_: Whole blob, single-shot blob
 
 **Oversized File**:
-A file larger than 25 MB, which v1 rejects instead of encrypting as a Full Data Envelope. Oversized files belong to the deferred Chunked File Envelope design.
+A file larger than 25 MB, which a v1 Full Data Envelope rejects. Files above that limit use hxdl.stream.v1 or hxdl.manifest.v1.
 _Avoid_: Large file, stream file
 
 **Chunked File Envelope**:
