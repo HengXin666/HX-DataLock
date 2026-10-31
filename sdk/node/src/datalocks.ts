@@ -4,7 +4,8 @@ import { dirname, resolve } from 'node:path';
 import { DataLockError, DataLockErrorCode } from './errors.js';
 import { ENVELOPE_ALG, ENVELOPE_SCHEMA, KEY_LENGTH, MAX_V1_FILE_BYTES } from './constants.js';
 import { DataEnvelope } from './documents.js';
-import { aadForEnvelope, b64, decryptAesGcm, encryptAesGcm, fromB64, utcNow } from './crypto-codec.js';
+import { aadForEnvelope, b64, decryptAesGcm, encryptAesGcm, utcNow } from './crypto-codec.js';
+import { lockStream, openStream } from './stream.js';
 
 /**
  * Detect unpaired UTF-16 surrogates.
@@ -26,6 +27,18 @@ function hasLoneSurrogate(text) {
     }
   }
   return false;
+}
+
+function asPayloadBytes(payloadBytes) {
+  if (typeof payloadBytes === 'string') {
+    throw new DataLockError(
+      DataLockErrorCode.INVALID_ARGUMENT,
+      'lockBytes requires Buffer or Uint8Array, not a string; use lockText for text',
+    );
+  }
+  if (Buffer.isBuffer(payloadBytes)) return payloadBytes;
+  if (payloadBytes instanceof Uint8Array) return Buffer.from(payloadBytes);
+  throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'lockBytes requires Buffer or Uint8Array');
 }
 
 function readWithinV1Limit(inputPath) {
@@ -71,7 +84,7 @@ export class SenderDataLock {
     this.publicKeyDocument = publicKeyDocument;
   }
   lockBytes(payloadBytes) {
-    const bytes = Buffer.isBuffer(payloadBytes) ? payloadBytes : Buffer.from(payloadBytes);
+    const bytes = asPayloadBytes(payloadBytes);
     // Enforce the v1 limit here, not only in lockFile. Without it lockBytes can
     // produce a Full Data Envelope that every SDK then refuses to open, so the
     // SDK would emit documents it cannot read back.
@@ -95,6 +108,18 @@ export class SenderDataLock {
     envelope.write(outputPath);
     return envelope;
   }
+  lockStream(src, dst, options: any = {}) {
+    this.publicKeyDocument.verify();
+    return lockStream({
+      keyId: this.publicKeyDocument.keyId,
+      publicKey: this.publicKeyDocument.publicWriteKey,
+      src,
+      dst,
+      chunkSize: options.chunkSize,
+      fileId: options.fileId,
+      chunkIndex: options.chunkIndex,
+    });
+  }
 }
 
 export class UserDataLock {
@@ -107,7 +132,7 @@ export class UserDataLock {
   }
   requireOpenReadKey() {
     if (!this.readKey) {
-      throw new DataLockError(DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING, 'User DataLock is closed');
+      throw new DataLockError(DataLockErrorCode.DATALOCK_CLOSED, 'User DataLock is closed');
     }
     return this.readKey;
   }
@@ -119,10 +144,11 @@ export class UserDataLock {
     if (dataEnvelope.raw.recipientKeyId !== this.keyring.keyId) {
       throw new DataLockError(DataLockErrorCode.ENVELOPE_RECIPIENT_MISMATCH, 'Data Envelope recipient does not match the Keyring');
     }
+    const decoded = dataEnvelope.decoded;
     let ephemeralPublicKey;
     try {
       ephemeralPublicKey = createPublicKey({
-        key: fromB64(dataEnvelope.raw.ephemeralPublicKey, 'ephemeralPublicKey', DataLockErrorCode.TAMPERED_ENVELOPE, { maxLength: 512 }),
+        key: decoded.ephemeralPublicKey,
         format: 'der',
         type: 'spki',
       });
@@ -141,16 +167,16 @@ export class UserDataLock {
     const contentKey = Buffer.from(hkdfSync(
       'sha256',
       sharedSecret,
-      fromB64(dataEnvelope.raw.hkdfSalt, 'hkdfSalt', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 32 }),
+      decoded.hkdfSalt,
       Buffer.from(`${ENVELOPE_SCHEMA}:${this.keyring.keyId}`, 'utf8'),
       KEY_LENGTH,
     ));
     return decryptAesGcm(
       contentKey,
       {
-        nonce: fromB64(dataEnvelope.raw.nonce, 'nonce', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 12 }),
-        tag: fromB64(dataEnvelope.raw.tag, 'tag', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 16 }),
-        ciphertext: fromB64(dataEnvelope.raw.ciphertext, 'ciphertext', DataLockErrorCode.TAMPERED_ENVELOPE),
+        nonce: decoded.nonce,
+        tag: decoded.tag,
+        ciphertext: decoded.ciphertext,
       },
       aadForEnvelope(this.keyring.keyId, dataEnvelope.raw.alg),
       DataLockErrorCode.TAMPERED_ENVELOPE,
@@ -181,7 +207,7 @@ export class UserDataLock {
   }
   lockBytes(payloadBytes) {
     this.requireOpenReadKey();
-    const bytes = Buffer.isBuffer(payloadBytes) ? payloadBytes : Buffer.from(payloadBytes);
+    const bytes = asPayloadBytes(payloadBytes);
     if (bytes.length > MAX_V1_FILE_BYTES) {
       throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support payloads up to 25 MB');
     }
@@ -201,6 +227,31 @@ export class UserDataLock {
     const envelope = this.lockBytes(readWithinV1Limit(inputPath));
     envelope.write(outputPath);
     return envelope;
+  }
+  lockStream(src, dst, options: any = {}) {
+    this.requireOpenReadKey();
+    this.keyring.verify();
+    return lockStream({
+      keyId: this.keyring.keyId,
+      publicKey: this.keyring.publicWriteKey,
+      src,
+      dst,
+      chunkSize: options.chunkSize,
+      fileId: options.fileId,
+      chunkIndex: options.chunkIndex,
+    });
+  }
+  openStream(src, dst) {
+    const readKey = this.requireOpenReadKey();
+    this.keyring.verify();
+    const recipientSpki = this.keyring.publicWriteKey.export({ format: 'der', type: 'spki' });
+    return openStream({
+      keyId: this.keyring.keyId,
+      readKey,
+      recipientSpki,
+      src,
+      dst,
+    });
   }
   close() {
     this.readKey = null;

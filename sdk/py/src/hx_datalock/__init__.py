@@ -1,3 +1,10 @@
+from .attestation import (
+    generate_attestation_key,
+    sign_envelope,
+    sign_manifest,
+    verify_attestation,
+    verify_signed_manifest,
+)
 from .sdk import (
     DataEnvelope,
     DataLockError,
@@ -16,14 +23,17 @@ from .sdk import (
     load_keyring,
     makeSenderDataLock,
     makeUserDataLock,
+    make_user_data_lock,
     make_v1_compatibility_manifest,
     open_file,
+    rewrap_keyring,
     send_file,
     send_file_with_public_doc,
     verify_keyring_file,
     verify_public_key_document_key_id,
     verify_public_key_document_file,
 )
+from .stream import changed_chunk_indexes, open_chunked, seal_chunked
 
 __all__ = [
     "DataEnvelope",
@@ -34,8 +44,10 @@ __all__ = [
     "SenderDataLock",
     "UserDataLock",
     "check_password_strength",
+    "changed_chunk_indexes",
     "create_keyring",
     "decrypt_message",
+    "generate_attestation_key",
     "encrypt_message",
     "encrypt_message_for_sender",
     "export_public_key_document",
@@ -43,11 +55,19 @@ __all__ = [
     "load_keyring",
     "makeSenderDataLock",
     "makeUserDataLock",
+    "make_user_data_lock",
     "make_v1_compatibility_manifest",
+    "open_chunked",
     "open_file",
+    "rewrap_keyring",
+    "seal_chunked",
+    "sign_envelope",
+    "sign_manifest",
     "send_file",
     "send_file_with_public_doc",
     "verify_keyring_file",
     "verify_public_key_document_key_id",
+    "verify_attestation",
     "verify_public_key_document_file",
+    "verify_signed_manifest",
 ]

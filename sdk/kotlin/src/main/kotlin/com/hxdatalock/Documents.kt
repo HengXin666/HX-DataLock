@@ -88,7 +88,28 @@ data class DataEnvelope(val raw: LinkedHashMap<String, Any?>) {
         writeJsonDocument(path, toJson())
     }
 
+    fun inspect(): Map<String, Any?> {
+        verify()
+        val ciphertext = CryptoCodec.fromB64(raw["ciphertext"], "ciphertext", DataLockErrorCode.TAMPERED_ENVELOPE)
+        return mapOf(
+            "schema" to raw["schema"],
+            "recipientKeyId" to raw["recipientKeyId"],
+            "createdAt" to raw["createdAt"],
+            "alg" to raw["alg"],
+            "ciphertextBytes" to ciphertext.size,
+        )
+    }
+
     companion object {
+        fun parse(text: String): DataEnvelope {
+            if (text.isEmpty()) {
+                throw DataLockException(DataLockErrorCode.INVALID_ARGUMENT, "Data Envelope JSON must be a string")
+            }
+            val envelope = DataEnvelope(StableJson.parse(text))
+            envelope.verify()
+            return envelope
+        }
+
         fun read(path: Path): DataEnvelope {
             val envelope = DataEnvelope(readJsonDocument(path, MAX_ENVELOPE_JSON_BYTES))
             envelope.verify()
@@ -101,6 +122,9 @@ data class PublicKeyDocument(val raw: LinkedHashMap<String, Any?>) {
     val keyId: String get() = raw.mapField("publicWriteKey", DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT)["keyId"] as String
 
     fun verify() {
+        if (raw["schema"] == KEYRING_SCHEMA) {
+            throw DataLockException(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, "Public Key Document must not be a full Keyring")
+        }
         if (raw["schema"] != PUBLIC_KEY_SCHEMA) {
             throw DataLockException(DataLockErrorCode.UNSUPPORTED_SCHEMA, "Unsupported Public Key Document schema: ${raw["schema"]}")
         }

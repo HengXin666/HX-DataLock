@@ -102,22 +102,23 @@ def test_keyring_verify_rejects_oversized_scrypt_n():
 def test_password_strength_report_reaches_the_caller(tmp_path):
     """ADR 0012 requires the report before Keyring creation, so it must not be discarded."""
     seen = []
-    create_keyring("password", scrypt_n=16384, on_password_report=seen.append)
+    with pytest.raises(DataLockError) as exc_info:
+        create_keyring("password", scrypt_n=16384, on_password_report=seen.append)
 
     assert len(seen) == 1
-    assert seen[0]["allowed"] is True
+    assert seen[0]["allowed"] is False
     assert seen[0]["level"] == "weak"
     assert seen[0]["warnings"]
+    assert exc_info.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
 
-    # A weak password still creates a Keyring in v1; the report only informs.
-    assert load_keyring_path_roundtrip(tmp_path, "password") is not None
+    assert load_keyring_path_roundtrip(tmp_path, "password", allow_weak=True) is not None
 
 
-def load_keyring_path_roundtrip(tmp_path, password):
+def load_keyring_path_roundtrip(tmp_path, password, *, allow_weak=False):
     from hx_datalock import load_keyring
 
     path = tmp_path / "roundtrip.hxdl.json"
-    init_keyring(path, password, scrypt_n=16384)
+    init_keyring(path, password, scrypt_n=16384, allow_weak=allow_weak)
     return load_keyring(path)
 
 

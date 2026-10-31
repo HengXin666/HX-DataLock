@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SCRYPT_N } from './constants.js';
-import { DataLockError } from './errors.js';
+import { DEFAULT_SCRYPT_N, RECOMMENDED_MIN_SCRYPT_N } from './constants.js';
+import { DataLockError, DataLockErrorCode } from './errors.js';
+import { checkPasswordStrength } from './password-strength.js';
 import { PublicKeyDocument } from './documents.js';
 import {
   createKeyring,
@@ -20,9 +21,10 @@ function usage() {
   console.log(`HX-DataLock
 
 Usage:
-  node sdk/node/hx-datalock.mjs init [--keyring keyring.hxdl.json] [--password-env NAME] [--scrypt-n N]
+  node sdk/node/hx-datalock.mjs init [--keyring keyring.hxdl.json] [--password-env NAME] [--password-stdin] [--scrypt-n N] [--allow-weak] [--public-keyring] [--generate-password]
+  Creates a private local Keyring. The Public Key Document is the publishable artifact.
   node sdk/node/hx-datalock.mjs export-public [--keyring keyring.hxdl.json] [--out public.hxdl.json]
-  node sdk/node/hx-datalock.mjs lock --public public.hxdl.json [--expect-key-id x25519:...] --in plain.bin --out sealed.hxdl.json
+  node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --expect-key-id x25519:... --in plain.bin --out sealed.hxdl.json [--allow-unpinned-key]
   node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in sealed.hxdl.json --out plain.bin [--password-env NAME]
   node sdk/node/hx-datalock.mjs verify-keyring [--keyring keyring.hxdl.json]
   node sdk/node/hx-datalock.mjs verify-public --public public.hxdl.json
@@ -51,6 +53,19 @@ function parseArgs(argv) {
 }
 
 async function readPassword(options, prompt = 'Master password: ') {
+  if (options['password-stdin']) {
+    const value = await new Promise((resolvePassword) => {
+      let data = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => {
+        data += chunk;
+      });
+      process.stdin.on('end', () => resolvePassword(data));
+    });
+    const line = String(value).split(/\r?\n/, 1)[0];
+    if (!line) throw new Error('stdin did not contain a Master Password');
+    return line;
+  }
   if (options['password-env']) {
     const value = process.env[options['password-env']];
     if (!value) {
@@ -97,13 +112,49 @@ async function readPassword(options, prompt = 'Master password: ') {
   });
 }
 
+function reportPasswordStrength(report) {
+  console.log(`Master Password strength: ${report.level} allowed=${report.allowed} entropyBits=${report.estimatedEntropyBits} score=${report.score}`);
+  for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+  for (const suggestion of report.suggestions) console.log(`  suggestion: ${suggestion}`);
+}
+
 async function commandInit(options) {
-  const password = await readPassword(options);
-  const keyring = createKeyring(password, { scryptN: Number(options['scrypt-n'] || DEFAULT_SCRYPT_N) });
+  if (options['public-keyring']) {
+    console.error(
+      'DANGER: this Keyring is being created for public storage. Anyone who downloads it can guess the Master Password offline. The password must measure at least 80 bits. Prefer a private Keyring and publish only the Public Key Document.',
+    );
+  }
+  let password;
+  if (options['generate-password']) {
+    const { randomBytes } = await import('node:crypto');
+    password = randomBytes(18).toString('base64url');
+    console.error('Generated Master Password (save it offline; it is not stored in the Keyring):');
+    console.error(password);
+  } else {
+    password = await readPassword(options);
+    if (!options['password-env'] && !options['password-stdin']) {
+      const confirmation = await readPassword(options, 'Confirm master password: ');
+      if (confirmation !== password) {
+        throw new Error('Master Password confirmation does not match');
+      }
+    }
+  }
+  const scryptN = Number(options['scrypt-n'] || DEFAULT_SCRYPT_N);
+  if (scryptN < RECOMMENDED_MIN_SCRYPT_N) {
+    console.error(`warning: scrypt N=${scryptN} is below the recommended ${RECOMMENDED_MIN_SCRYPT_N}`);
+  }
+  const report = checkPasswordStrength(password);
+  reportPasswordStrength(report);
+  const keyring = createKeyring(password, {
+    scryptN,
+    allowWeak: Boolean(options['allow-weak']),
+    publicKeyring: Boolean(options['public-keyring']),
+  });
   const outPath = options.keyring || options.out || 'keyring.hxdl.json';
   keyring.write(outPath);
   console.log(`Keyring written: ${outPath}`);
   console.log(`Write Key ID: ${keyring.keyId}`);
+  console.log('Keyring storage: private local file. Publish the Public Key Document, not this file.');
 }
 
 function commandExportPublic(options) {
@@ -119,7 +170,17 @@ function commandLock(options) {
   if (!options.public || !options.in || !options.out) {
     throw new Error('lock requires --public, --in, and --out');
   }
-  makeSenderDataLock(PublicKeyDocument.read(options.public), { expectedKeyId: options['expect-key-id'] }).lockFile(options.in, options.out);
+  const document = PublicKeyDocument.read(options.public);
+  if (!options['expect-key-id'] && !options['allow-unpinned-key']) {
+    throw new DataLockError(
+      DataLockErrorCode.UNPINNED_PUBLIC_KEY,
+      'lock requires --expect-key-id. Pass --allow-unpinned-key only if you accept a replaced Public Key Document.',
+    );
+  }
+  makeSenderDataLock(document, {
+    expectedKeyId: options['expect-key-id'],
+    requireExpectedKeyId: !options['allow-unpinned-key'],
+  }).lockFile(options.in, options.out);
   console.log(`Data Envelope written: ${options.out}`);
 }
 

@@ -1,6 +1,6 @@
 # HX-DataLock
 
-HX-DataLock is a general-purpose encryption context for separating data writing from data reading. It treats public storage as hostile and GitHub-hosted key material as non-secret unless it is protected by the user's master password.
+HX-DataLock is a general-purpose encryption context for separating data writing from data reading. It treats public storage as hostile. A Keyring is a private local document. The Public Key Document is the only key material meant to be published.
 
 ## Language
 
@@ -9,11 +9,11 @@ A strict Unicode secret memorized by the user and used locally to unwrap the Rea
 _Avoid_: Login password, account password
 
 **Password Strength Policy**:
-A local check that warns about weak Master Passwords before a Keyring is created while still allowing the user to continue. It exists because length alone does not describe offline attack resistance for user-chosen passwords.
+A local zxcvbn-style check that rejects a weak Master Password before a Keyring is created or rewrapped. An explicit allow-weak override exists for tests and migration. A Keyring created for public storage also requires about 80 bits of estimated entropy, and that floor cannot be skipped.
 _Avoid_: Password rule, length check
 
 **Password Strength Report**:
-A structured result from the Password Strength Policy containing a strength level, warnings, and suggestions. It informs the user but does not block Keyring creation in v1.
+A structured result from the Password Strength Policy containing a strength level, a zxcvbn score, an entropy estimate, warnings, and suggestions. Callers see it before key material is derived.
 _Avoid_: Password valid flag, password score only
 
 **Secret Residency Policy**:
@@ -65,8 +65,8 @@ The private recipient key that can decrypt Data Envelopes after it is unwrapped 
 _Avoid_: Private key, decrypt key
 
 **Keyring**:
-A GitHub-stored document containing the Write Key and the Read Key encrypted under a key derived from the Master Password.
-_Avoid_: Key file, secret file
+A private local document containing the Write Key and the Read Key encrypted under a key derived from the Master Password. It is not a Public Key Document and is not meant to be committed or published. Publishing one is an explicit, warned exception that demands a high-entropy Master Password.
+_Avoid_: GitHub-stored keyring, public key file, secret file
 
 **Public Key Document**:
 A document containing only the Write Key and non-secret metadata. It is the only supported input for Write-only Senders because it omits all Master Password-related material, including the encrypted Read Key.
@@ -97,7 +97,7 @@ A file larger than 25 MB, which v1 rejects instead of encrypting as a Full Data 
 _Avoid_: Large file, stream file
 
 **Chunked File Envelope**:
-A deferred Data Envelope family for large files where the file is split into independently encrypted chunks plus authenticated file-level metadata. It is not part of the first supported SDK surface because chunk boundaries and parallel decrypt semantics need a stable compatibility design.
+The `hxdl.stream.v1` container and the `hxdl.manifest.v1` document. A stream encrypts one payload as ordered AEAD chunks. A manifest names independent chunks so an update can resend only the chunks whose plaintext changed. Neither format changes a v1 Data Envelope.
 _Avoid_: Big envelope, streamed blob
 
 **Public Storage**:

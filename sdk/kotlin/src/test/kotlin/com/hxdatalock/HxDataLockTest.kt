@@ -5,6 +5,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 
@@ -23,7 +24,22 @@ class HxDataLockTest {
         val closed = assertFailsWith<DataLockException> {
             user.openBytes(envelope)
         }
-        assertEquals(DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING, closed.code)
+        assertEquals(DataLockErrorCode.DATALOCK_CLOSED, closed.code)
+    }
+
+    @Test
+    fun senderLocksFromPublicDocumentAndEnvelopeParsesFromString() {
+        val password = "correct horse battery staple for hx datalock"
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384))
+        val document = HxDataLock.exportPublicKeyDocument(keyring)
+        val sender = HxDataLock.makeSenderDataLock(document, expectedKeyId = document.keyId)
+        val envelope = sender.lockText("from sender")
+        val parsed = DataEnvelope.parse(envelope.toJson())
+        assertEquals(document.keyId, parsed.inspect()["recipientKeyId"])
+        val user = HxDataLock.makeUserDataLock(keyring, password)
+        assertEquals("from sender", user.openText(parsed))
+        val surrogate = assertFailsWith<DataLockException> { sender.lockText("bad\uD800") }
+        assertEquals(DataLockErrorCode.INVALID_UTF8, surrogate.code)
     }
 
     @Test
@@ -151,9 +167,9 @@ class HxDataLockTest {
     }
 
     @Test
-    fun v1ScopeDoesNotExposeSenderDataLock() {
+    fun senderDataLockIsPartOfThePublicSurface() {
         val publicMembers = HxDataLock::class.java.methods.map { it.name }.toSet()
 
-        assertFalse(publicMembers.contains("makeSenderDataLock"))
+        assertTrue(publicMembers.contains("makeSenderDataLock"))
     }
 }

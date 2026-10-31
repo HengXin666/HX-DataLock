@@ -5,6 +5,10 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric import x25519
 
+from typing import Any, BinaryIO
+
+from cryptography.hazmat.primitives import serialization
+
 from .constants import MAX_V1_FILE_BYTES
 from .crypto_codec import lock_bytes_with_public_key_raw, open_envelope_payload
 from .documents import DataEnvelope, Keyring, PublicKeyDocument
@@ -16,9 +20,8 @@ from .json import write_private_bytes
 class SenderDataLock:
     public_key_document: PublicKeyDocument
 
-    def lockBytes(self, payload_bytes: bytes) -> DataEnvelope:
-        if not isinstance(payload_bytes, bytes):
-            raise TypeError("payload_bytes must be bytes")
+    def lockBytes(self, payload_bytes: bytes | bytearray | memoryview) -> DataEnvelope:
+        payload_bytes = _payload_bytes(payload_bytes)
         # Enforce the v1 limit here, not only in lockFile: otherwise lockBytes can
         # produce a Full Data Envelope that every SDK then refuses to open.
         if len(payload_bytes) > MAX_V1_FILE_BYTES:
@@ -55,6 +58,19 @@ class SenderDataLock:
         envelope.write(output_path)
         return envelope
 
+    def lockStream(self, src: BinaryIO, dst: BinaryIO, **kwargs: Any) -> dict[str, Any]:
+        from .stream import lock_stream
+
+        self.public_key_document.verify()
+        public = self.public_key_document.public_write_key
+        return lock_stream(
+            key_id=self.public_key_document.key_id,
+            public_key=public,
+            src=src,
+            dst=dst,
+            **kwargs,
+        )
+
 
 @dataclass
 class UserDataLock:
@@ -64,7 +80,7 @@ class UserDataLock:
     def _require_open_read_key(self) -> x25519.X25519PrivateKey:
         if self._read_key is None:
             raise DataLockError(
-                DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING,
+                DataLockErrorCode.DATALOCK_CLOSED,
                 "User DataLock is closed",
             )
         return self._read_key
@@ -77,14 +93,18 @@ class UserDataLock:
         if not isinstance(envelope, DataEnvelope):
             raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "openBytes requires a Data Envelope")
 
-        raw = envelope.raw
         envelope.verify()
-        if raw.get("recipientKeyId") != self.keyring.key_id:
+        if envelope.raw.get("recipientKeyId") != self.keyring.key_id:
             raise DataLockError(
                 DataLockErrorCode.ENVELOPE_RECIPIENT_MISMATCH,
                 "Data Envelope recipient does not match the Keyring",
             )
-        return open_envelope_payload(self.keyring.key_id, read_key, raw)
+        return open_envelope_payload(
+            self.keyring.key_id,
+            read_key,
+            envelope.raw,
+            envelope.decoded_fields(),
+        )
 
     def openText(self, envelope: DataEnvelope) -> str:
         try:
@@ -104,10 +124,9 @@ class UserDataLock:
         write_private_bytes(output_path, plaintext)
         return plaintext
 
-    def lockBytes(self, payload_bytes: bytes) -> DataEnvelope:
+    def lockBytes(self, payload_bytes: bytes | bytearray | memoryview) -> DataEnvelope:
         self._require_open_read_key()
-        if not isinstance(payload_bytes, bytes):
-            raise TypeError("payload_bytes must be bytes")
+        payload_bytes = _payload_bytes(payload_bytes)
         if len(payload_bytes) > MAX_V1_FILE_BYTES:
             raise DataLockError(
                 DataLockErrorCode.OVERSIZED_FILE,
@@ -142,5 +161,55 @@ class UserDataLock:
         envelope.write(output_path)
         return envelope
 
+    def lockStream(self, src: BinaryIO, dst: BinaryIO, **kwargs: Any) -> dict[str, Any]:
+        from .stream import lock_stream
+
+        self._require_open_read_key()
+        self.keyring.verify()
+        return lock_stream(
+            key_id=self.keyring.key_id,
+            public_key=self.keyring.public_write_key,
+            src=src,
+            dst=dst,
+            **kwargs,
+        )
+
+    def openStream(self, src: BinaryIO, dst: BinaryIO) -> dict[str, Any]:
+        from .stream import open_stream
+
+        read_key = self._require_open_read_key()
+        self.keyring.verify()
+        public = self.keyring.public_write_key
+        recipient_spki = public.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        return open_stream(
+            key_id=self.keyring.key_id,
+            read_key=read_key,
+            recipient_spki=recipient_spki,
+            src=src,
+            dst=dst,
+        )
+
     def close(self) -> None:
         self._read_key = None
+
+    def __enter__(self) -> "UserDataLock":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+
+def _payload_bytes(payload_bytes: bytes | bytearray | memoryview) -> bytes:
+    if isinstance(payload_bytes, memoryview):
+        payload_bytes = payload_bytes.tobytes()
+    elif isinstance(payload_bytes, bytearray):
+        payload_bytes = bytes(payload_bytes)
+    if not isinstance(payload_bytes, bytes):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ARGUMENT,
+            "lockBytes requires bytes, bytearray, or memoryview; use lockText for text",
+        )
+    return payload_bytes

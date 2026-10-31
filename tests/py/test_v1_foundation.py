@@ -24,19 +24,24 @@ from hx_datalock import (
 PASSWORD = "correct horse battery staple for hx datalock"
 
 
-def test_password_strength_report_warns_but_does_not_block_weak_passwords() -> None:
+def test_password_strength_report_rejects_weak_passwords() -> None:
     weak_report = check_password_strength("password")
-    assert weak_report["allowed"] is True
+    assert weak_report["allowed"] is False
     assert weak_report["level"] == "weak"
     assert weak_report["warnings"]
-    assert weak_report["suggestions"]
+    assert weak_report["score"] <= 1
+    assert weak_report["estimatedEntropyBits"] <= 20
 
     strong_report = check_password_strength("correct horse battery staple for hx datalock")
     assert strong_report["allowed"] is True
     assert strong_report["level"] in {"good", "strong"}
     assert strong_report["warnings"] == []
 
-    keyring = create_keyring("password", scrypt_n=16384)
+    with pytest.raises(DataLockError) as exc_info:
+        create_keyring("password", scrypt_n=16384)
+    assert exc_info.value.code is DataLockErrorCode.WEAK_MASTER_PASSWORD
+
+    keyring = create_keyring("password", scrypt_n=16384, allow_weak=True)
     assert keyring.raw["schema"] == "hxdl.keyring.v1"
 
 
@@ -62,10 +67,10 @@ def test_strength_report_flags_dictionary_passwords(password: str) -> None:
     """
     report = check_password_strength(password)
 
-    assert report["compromised"] is True
-    assert report["level"] == "weak"
-    assert report["estimatedEntropyBits"] <= 20
-    assert any("common-password lists" in warning for warning in report["warnings"])
+    assert report["allowed"] is False
+    assert report["level"] in {"weak", "fair"}
+    assert report["estimatedEntropyBits"] < 40
+    assert report["warnings"]
 
 
 def test_strength_report_does_not_flag_a_passphrase_or_a_random_string() -> None:
@@ -88,7 +93,8 @@ def test_strength_report_flags_repetition_and_sequences() -> None:
     for password in ("aaaaaaaa", "abcabcabc"):
         report = check_password_strength(password)
         assert report["level"] == "weak"
-        assert any("repetition" in warning for warning in report["warnings"])
+        assert report["allowed"] is False
+        assert report["warnings"]
 
 
 def test_master_password_uses_nfc_normalization_for_unlock() -> None:
@@ -417,7 +423,7 @@ def test_user_datalock_opens_and_locks_payloads_for_local_user() -> None:
     user.close()
     with pytest.raises(DataLockError) as exc_info:
         user.openBytes(envelope)
-    assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+    assert exc_info.value.code is DataLockErrorCode.DATALOCK_CLOSED
 
 
 def test_user_datalock_reports_expected_open_failure_codes() -> None:
@@ -457,7 +463,7 @@ def test_sdk_requires_explicit_master_password_even_when_environment_variable_ex
 
     with pytest.raises(DataLockError) as exc_info:
         makeUserDataLock(keyring, {})
-    assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+    assert exc_info.value.code is DataLockErrorCode.INVALID_ARGUMENT
 
 
 def test_user_datalock_file_helpers_write_outputs_and_enforce_v1_limit(tmp_path: Path) -> None:

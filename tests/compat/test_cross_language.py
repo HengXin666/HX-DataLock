@@ -76,6 +76,7 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
                 "lock",
                 "--public",
                 str(public_path),
+                "--allow-unpinned-key",
                 "--in",
                 str(plain_path),
                 "--out",
@@ -89,6 +90,7 @@ def test_each_sdk_can_open_envelopes_locked_by_every_sdk(tmp_path: Path) -> None
                 "lock",
                 "--public",
                 str(public_path),
+                "--allow-unpinned-key",
                 "--in",
                 str(plain_path),
                 "--out",
@@ -249,6 +251,7 @@ def test_node_locks_with_public_document_and_python_opens(tmp_path: Path) -> Non
             "lock",
             "--public",
             str(public_path),
+            "--allow-unpinned-key",
             "--in",
             str(plain_path),
             "--out",
@@ -282,6 +285,7 @@ def test_python_public_document_works_with_node_lock_and_open(tmp_path: Path) ->
             "lock",
             "--public",
             str(public_path),
+            "--allow-unpinned-key",
             "--in",
             str(plain_path),
             "--out",
@@ -349,6 +353,7 @@ def test_node_cli_reports_stable_v1_error_codes(tmp_path: Path) -> None:
             "lock",
             "--public",
             str(public_path),
+            "--allow-unpinned-key",
             "--in",
             str(plain_path),
             "--out",
@@ -523,6 +528,7 @@ def test_node_cli_rejects_oversized_v1_files(tmp_path: Path) -> None:
             "lock",
             "--public",
             str(public_path),
+            "--allow-unpinned-key",
             "--in",
             str(oversized_path),
             "--out",
@@ -648,7 +654,7 @@ const envelope = sender.lockText('typescript sdk payload');
 const user = makeUserDataLock(keyring, {{ masterPassword: password }});
 const opened = user.openText(envelope);
 
-if (report.allowed !== true || report.level !== 'weak') throw new Error('bad password report');
+if (report.allowed !== false || report.level !== 'weak') throw new Error('bad password report ' + JSON.stringify(report));
 if (opened !== 'typescript sdk payload') throw new Error('round trip failed');
 if (typeof sender.openBytes !== 'undefined') throw new Error('sender can open');
 for (const name of ['openBytes', 'openText', 'openFile', 'lockBytes', 'lockText', 'lockFile', 'close']) {{

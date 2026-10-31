@@ -38,6 +38,9 @@ export class Keyring {
     validatePublicWriteKey(this.raw, DataLockErrorCode.INVALID_KEYRING);
   }
   toJSON() {
+    return this.raw;
+  }
+  serialize() {
     return `${JSON.stringify(this.raw, null, 2)}\n`;
   }
   write(path) {
@@ -94,10 +97,21 @@ export class PublicKeyDocument {
     validatePublicWriteKey(this.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT);
   }
   toJSON() {
+    return this.raw;
+  }
+  serialize() {
     return `${JSON.stringify(this.raw, null, 2)}\n`;
   }
   write(path) {
     writeJson(path, this.raw);
+  }
+  static parse(text) {
+    if (typeof text !== 'string') {
+      throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Public Key Document JSON must be a string');
+    }
+    const document = new PublicKeyDocument(JSON.parse(text));
+    document.verify();
+    return document;
   }
   static read(path) {
     const document = new PublicKeyDocument(readJson(path, MAX_PUBLIC_KEY_JSON_BYTES));
@@ -108,22 +122,56 @@ export class PublicKeyDocument {
 
 export class DataEnvelope {
   raw: any;
+  decoded: any;
 
   constructor(raw) {
     this.raw = raw;
+    this.decoded = null;
   }
   verify() {
+    if (this.decoded) return;
     if (this.raw?.schema !== ENVELOPE_SCHEMA) {
       throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, `Unsupported Data Envelope schema: ${this.raw?.schema}`);
     }
     requireEnvelopeAlg(this.raw);
-    validateEnvelopeFields(this.raw);
+    this.decoded = validateEnvelopeFields(this.raw);
   }
+  /** Object form so JSON.stringify(envelope) encodes the document once. */
   toJSON() {
+    return this.raw;
+  }
+  serialize() {
     return `${JSON.stringify(this.raw, null, 2)}\n`;
+  }
+  inspect() {
+    this.verify();
+    return {
+      schema: this.raw.schema,
+      recipientKeyId: this.raw.recipientKeyId,
+      createdAt: this.raw.createdAt,
+      alg: { ...this.raw.alg },
+      ciphertextBytes: this.decoded.ciphertext.length,
+    };
   }
   write(path) {
     writeJson(path, this.raw);
+  }
+  static parse(text) {
+    if (typeof text !== 'string') {
+      throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Data Envelope JSON must be a string');
+    }
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch (error) {
+      throw new DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, 'Data Envelope JSON is not valid');
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, 'JSON document must be an object');
+    }
+    const document = new DataEnvelope(raw);
+    document.verify();
+    return document;
   }
   static read(path) {
     const document = new DataEnvelope(readJson(path));

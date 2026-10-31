@@ -98,6 +98,7 @@ def test_cli_v1_export_public_lock_and_open_round_trip(tmp_path: Path) -> None:
         "lock",
         "--public",
         str(public_path),
+        "--allow-unpinned-key",
         "--in",
         str(plaintext_path),
         "--out",

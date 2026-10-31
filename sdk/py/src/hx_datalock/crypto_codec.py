@@ -6,6 +6,7 @@ import hashlib
 import re
 import secrets
 import unicodedata
+import warnings
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,8 +27,9 @@ from .constants import (
     MAX_SCRYPT_R,
     MAX_V1_FILE_BYTES,
     MIN_SCRYPT_N,
+    RECOMMENDED_MIN_SCRYPT_N,
 )
-from .errors import DataLockError, DataLockErrorCode
+from .errors import DataLockError, DataLockErrorCode, ScryptCostWarning
 
 X25519_SPKI_MAX_BYTES = 512
 WRAPPED_READ_KEY_MAX_BYTES = 4096
@@ -98,8 +100,15 @@ def validate_scrypt_n(value: int) -> None:
         or value > MAX_SCRYPT_N
         or value & (value - 1)
     ):
-        raise ValueError(
-            f"scrypt_n must be a power of two between {MIN_SCRYPT_N} and {MAX_SCRYPT_N}"
+        raise DataLockError(
+            DataLockErrorCode.INVALID_SCRYPT_PARAMS,
+            f"scrypt N must be a power of two between {MIN_SCRYPT_N} and {MAX_SCRYPT_N}",
+        )
+    if value < RECOMMENDED_MIN_SCRYPT_N:
+        warnings.warn(
+            f"scrypt N={value} is below the recommended {RECOMMENDED_MIN_SCRYPT_N} (2^17)",
+            ScryptCostWarning,
+            stacklevel=2,
         )
 
 
@@ -174,19 +183,24 @@ def require_creation_time(raw: dict[str, Any], *, error_code: DataLockErrorCode)
         )
 
 
-def validate_envelope_fields(raw: dict[str, Any]) -> None:
+def validate_envelope_fields(raw: dict[str, Any]) -> dict[str, bytes]:
+    """Validate envelope binary fields and return the decoded bytes.
+
+    Callers that already hold this dict must not decode the same fields again.
+    Decrypting a large envelope used to run the base64 check three times.
+    """
     if not isinstance(raw.get("recipientKeyId"), str) or not raw["recipientKeyId"]:
         raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope must contain recipientKeyId")
     require_creation_time(raw, error_code=DataLockErrorCode.TAMPERED_ENVELOPE)
-    from_b64(
+    ephemeral = from_b64(
         raw.get("ephemeralPublicKey"),
         "ephemeralPublicKey",
         error_code=DataLockErrorCode.TAMPERED_ENVELOPE,
         max_length=X25519_SPKI_MAX_BYTES,
     )
-    from_b64(raw.get("hkdfSalt"), "hkdfSalt", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=32)
-    from_b64(raw.get("nonce"), "nonce", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=12)
-    from_b64(raw.get("tag"), "tag", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=16)
+    hkdf_salt = from_b64(raw.get("hkdfSalt"), "hkdfSalt", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=32)
+    nonce = from_b64(raw.get("nonce"), "nonce", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=12)
+    tag = from_b64(raw.get("tag"), "tag", error_code=DataLockErrorCode.TAMPERED_ENVELOPE, exact_length=16)
     ciphertext = raw.get("ciphertext")
     if not isinstance(ciphertext, str):
         raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Missing or invalid base64 field: ciphertext")
@@ -199,6 +213,13 @@ def validate_envelope_fields(raw: dict[str, Any]) -> None:
     )
     if len(decoded_ciphertext) > MAX_V1_FILE_BYTES:
         raise DataLockError(DataLockErrorCode.OVERSIZED_FILE, "Data Envelope ciphertext exceeds the v1 size limit")
+    return {
+        "ephemeralPublicKey": ephemeral,
+        "hkdfSalt": hkdf_salt,
+        "nonce": nonce,
+        "tag": tag,
+        "ciphertext": decoded_ciphertext,
+    }
 
 
 def derive_password_key(master_password: str, kdf: dict[str, Any]) -> bytes:
@@ -346,12 +367,11 @@ def open_envelope_payload(
     key_id: str,
     read_key: x25519.X25519PrivateKey,
     raw: dict[str, Any],
+    decoded: dict[str, bytes] | None = None,
 ) -> bytes:
-    validate_envelope_fields(raw)
+    fields = decoded if decoded is not None else validate_envelope_fields(raw)
     try:
-        loaded_public = serialization.load_der_public_key(
-            envelope_b64(raw, "ephemeralPublicKey")
-        )
+        loaded_public = serialization.load_der_public_key(fields["ephemeralPublicKey"])
     except DataLockError as exc:
         raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Invalid Data Envelope public key") from exc
     except Exception as exc:
@@ -376,13 +396,13 @@ def open_envelope_payload(
     content_key = HKDF(
         algorithm=hashes.SHA256(),
         length=KEY_LENGTH,
-        salt=envelope_b64(raw, "hkdfSalt"),
+        salt=fields["hkdfSalt"],
         info=f"{ENVELOPE_SCHEMA}:{key_id}".encode("utf-8"),
     ).derive(shared_secret)
     try:
         return AESGCM(content_key).decrypt(
-            envelope_b64(raw, "nonce"),
-            envelope_b64(raw, "ciphertext") + envelope_b64(raw, "tag"),
+            fields["nonce"],
+            fields["ciphertext"] + fields["tag"],
             envelope_aad(key_id, raw["alg"]),
         )
     except InvalidTag as exc:

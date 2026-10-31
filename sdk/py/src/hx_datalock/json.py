@@ -32,6 +32,8 @@ def write_private_bytes(path: str | Path, payload: bytes) -> None:
     """Write owner-only bytes, converging the mode even if the file pre-exists."""
     document_path = Path(path)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     mode = stat.S_IRUSR | stat.S_IWUSR
     if os.name == "posix" and document_path.exists():
         document_path.chmod(mode)

@@ -1,6 +1,7 @@
 package com.hxdatalock
 
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
+import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -48,6 +49,18 @@ object HxDataLock {
 
     fun loadKeyring(path: Path): Keyring = Keyring.read(path)
 
+    fun makeSenderDataLock(document: PublicKeyDocument, expectedKeyId: String? = null, requireExpectedKeyId: Boolean = false): SenderDataLock {
+        document.verify()
+        if (expectedKeyId != null) {
+            if (document.keyId != expectedKeyId) {
+                throw DataLockException(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, "Public Key Document keyId does not match the expected keyId")
+            }
+        } else if (requireExpectedKeyId) {
+            throw DataLockException(DataLockErrorCode.UNPINNED_PUBLIC_KEY, "Sender DataLock requires expectedKeyId so a replaced Public Key Document is rejected")
+        }
+        return SenderDataLock(document)
+    }
+
     fun exportPublicKeyDocument(keyring: Keyring): PublicKeyDocument {
         keyring.verify()
         val document = PublicKeyDocument(
@@ -59,6 +72,35 @@ object HxDataLock {
         )
         document.verify()
         return document
+    }
+}
+
+class SenderDataLock internal constructor(
+    private val document: PublicKeyDocument,
+) {
+    fun lockBytes(payloadBytes: ByteArray): DataEnvelope {
+        if (payloadBytes.size > MAX_V1_FILE_BYTES) {
+            throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "V1 Full Data Envelopes support payloads up to 25 MB")
+        }
+        document.verify()
+        return DataEnvelope(
+            CryptoCodec.lockBytesWithPublicKey(
+                document.keyId,
+                CryptoCodec.loadPublicWriteKey(document.raw, DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT),
+                payloadBytes,
+            ),
+        )
+    }
+
+    fun lockText(text: String): DataEnvelope = lockBytes(encodeStrictUtf8(text))
+
+    fun lockFile(inputPath: Path, outputPath: Path): DataEnvelope {
+        if (Files.size(inputPath) > MAX_V1_FILE_BYTES) {
+            throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "V1 Full Data Envelopes support local files up to 25 MB")
+        }
+        val envelope = lockBytes(Files.readAllBytes(inputPath))
+        envelope.write(outputPath)
+        return envelope
     }
 }
 
@@ -110,7 +152,7 @@ class UserDataLock internal constructor(
         return DataEnvelope(CryptoCodec.lockBytesWithPublicKey(keyring.keyId, CryptoCodec.loadPublicWriteKey(keyring.raw, DataLockErrorCode.INVALID_KEYRING), payloadBytes))
     }
 
-    fun lockText(text: String): DataEnvelope = lockBytes(text.encodeToByteArray())
+    fun lockText(text: String): DataEnvelope = lockBytes(encodeStrictUtf8(text))
 
     fun lockFile(inputPath: Path, outputPath: Path): DataEnvelope {
         if (Files.size(inputPath) > MAX_V1_FILE_BYTES) {
@@ -126,11 +168,28 @@ class UserDataLock internal constructor(
     }
 
     private fun requireOpenReadKey(): X25519PrivateKeyParameters =
-        readKey ?: throw DataLockException(DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING, "User DataLock is closed")
+        readKey ?: throw DataLockException(DataLockErrorCode.DATALOCK_CLOSED, "User DataLock is closed")
+}
+
+internal fun encodeStrictUtf8(text: String): ByteArray {
+    try {
+        val encoded = StandardCharsets.UTF_8.newEncoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .encode(CharBuffer.wrap(text))
+        val out = ByteArray(encoded.remaining())
+        encoded.get(out)
+        return out
+    } catch (ex: CharacterCodingException) {
+        throw DataLockException(DataLockErrorCode.INVALID_UTF8, "Text is not valid UTF-8", ex)
+    }
 }
 
 private fun validateScryptN(value: Int) {
     if (value < MIN_SCRYPT_N || value > MAX_SCRYPT_N || value and (value - 1) != 0) {
-        throw IllegalArgumentException("scryptN must be a power of two between $MIN_SCRYPT_N and $MAX_SCRYPT_N")
+        throw DataLockException(
+            DataLockErrorCode.INVALID_SCRYPT_PARAMS,
+            "scrypt N must be a power of two between $MIN_SCRYPT_N and $MAX_SCRYPT_N",
+        )
     }
 }

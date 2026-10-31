@@ -1,6 +1,8 @@
 # Password-wrapped X25519 Keyring
 
-We use a GitHub-stored Keyring that exposes an X25519 Write Key and stores the matching Read Key encrypted by a key derived from the user's Master Password. This deliberately avoids sending the Master Password to GitHub Actions: GitHub may store and validate the Keyring, but local machines remain the only place where the Read Key is unwrapped.
+Status: the X25519 wrapping decision stands. The "GitHub-stored Keyring" sentence is superseded by ADR 0025. A Keyring is private. GitHub may see a Public Key Document, not the Keyring.
+
+We use an X25519 Write Key and store the matching Read Key encrypted by a key derived from the user's Master Password. This deliberately avoids sending the Master Password to GitHub Actions: local machines remain the only place where the Read Key is unwrapped.
 
 ## Considered Options
 

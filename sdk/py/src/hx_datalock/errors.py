@@ -16,9 +16,21 @@ class DataLockErrorCode(str, Enum):
     OVERSIZED_FILE = "OVERSIZED_FILE"
     INVALID_UTF8 = "INVALID_UTF8"
     UNSUPPORTED_ALGORITHM = "UNSUPPORTED_ALGORITHM"
+    DATALOCK_CLOSED = "DATALOCK_CLOSED"
+    INVALID_ARGUMENT = "INVALID_ARGUMENT"
+    WEAK_MASTER_PASSWORD = "WEAK_MASTER_PASSWORD"
+    INVALID_SCRYPT_PARAMS = "INVALID_SCRYPT_PARAMS"
+    UNPINNED_PUBLIC_KEY = "UNPINNED_PUBLIC_KEY"
+    TAMPERED_STREAM = "TAMPERED_STREAM"
+    INVALID_MANIFEST = "INVALID_MANIFEST"
+    INVALID_ATTESTATION = "INVALID_ATTESTATION"
 
     def __str__(self) -> str:
         return self.value
+
+
+class ScryptCostWarning(UserWarning):
+    """scrypt cost is inside the accepted window but below the recommended floor."""
 
 
 class DataLockError(Exception):
