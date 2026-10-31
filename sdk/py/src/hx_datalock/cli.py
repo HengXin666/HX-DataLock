@@ -20,6 +20,7 @@ from .sdk import (
     init_keyring,
     load_keyring,
     makeSenderDataLock,
+    rewrap_keyring,
     makeUserDataLock,
     verify_keyring_file,
     verify_public_key_document_file,
@@ -73,6 +74,32 @@ def _report_password_strength(report: dict) -> None:
         print(f"  warning: {warning}")
     for suggestion in report.get("suggestions", []):
         print(f"  suggestion: {suggestion}")
+
+
+def _cmd_rewrap(args: argparse.Namespace) -> None:
+    if args.public_keyring:
+        print(
+            "DANGER: this Keyring is being rewrapped for public storage. Anyone who downloads it "
+            "can guess the Master Password offline. The new password must measure at least 80 bits.",
+            file=sys.stderr,
+        )
+    current = _read_password(args.password_env, confirm=False, password_stdin=args.password_stdin)
+    new_password = os.environ.get(args.new_password_env or "")
+    if not new_password:
+        _fail("MISSING_MASTER_PASSWORD_ENV", f"Environment variable {args.new_password_env} is empty or missing")
+    keyring = rewrap_keyring(
+        load_keyring(args.keyring),
+        current,
+        new_password,
+        on_password_report=_report_password_strength,
+        allow_weak_password=args.allow_weak_password,
+        allow_low_scrypt_n=args.allow_low_scrypt_n,
+        public_keyring=args.public_keyring,
+    )
+    output = args.output or args.keyring
+    keyring.write(output)
+    print(f"Keyring rewritten: {output}")
+    print(f"Write Key ID: {keyring.key_id}")
 
 
 def _cmd_init(args: argparse.Namespace) -> None:
@@ -243,6 +270,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument("--generate-password", action="store_true", help="generate a random Master Password and print it once to stderr")
     init.set_defaults(func=_cmd_init)
+
+    rewrap = subcommands.add_parser("rewrap", help="wrap the same Read Key with a new Master Password")
+    rewrap.add_argument("--keyring", default="keyring.hxdl.json")
+    rewrap.add_argument("--out", dest="output")
+    rewrap.add_argument("--password-env")
+    rewrap.add_argument("--password-stdin", action="store_true")
+    rewrap.add_argument("--new-password-env", required=True)
+    rewrap.add_argument("--allow-weak-password", "--allow-weak", action="store_true")
+    rewrap.add_argument("--allow-low-scrypt-n", action="store_true")
+    rewrap.add_argument(
+        "--public-keyring",
+        action="store_true",
+        help="DANGER: the rewrapped Keyring may be published. Requires an 80-bit Master Password.",
+    )
+    rewrap.set_defaults(func=_cmd_rewrap)
 
     lock = subcommands.add_parser("lock", help="lock a local file with a Public Key Document")
     lock.add_argument("--public", required=True)

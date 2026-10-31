@@ -2,10 +2,9 @@
 
 Status: 部分落地
 
-`sdk/swift` 是 Swift Package。Linux 上用 Swift 6.2 和 swift-crypto（X25519、HKDF、AES-GCM、scrypt）跑通了 Keyring 创建和 `hxdl.envelope.v1` 往返，`hxdl-swift` 已进入四端信封互通测试。
+`sdk/swift` 在 Linux 上覆盖 Keyring 创建和 rewrap、`hxdl.envelope.v1`、`hxdl.stream.v1`、`hxdl.manifest.v1`、Ed25519 attestation / signed manifest，以及与另外三端相同的 46/80 bit 口令门槛。zxcvbn 是纯 Swift 移植，修了 Linux 上 JSON null 强制转换会中止进程的问题。
 
-仍未完成，也不能假装完成：
+仍未完成：
 
 - 本环境没有 Xcode，没有编过 iOS 或 macOS 目标。
-- CryptoKit 没有 scrypt。Apple 目标也应依赖 swift-crypto，而不是把 scrypt 换成 CryptoKit。
-- 流、清单、Ed25519 证明和 zxcvbn 不在这个包里。
+- CryptoKit 没有 scrypt。Apple 目标继续用 swift-crypto。

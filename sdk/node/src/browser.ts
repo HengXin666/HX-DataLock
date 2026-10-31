@@ -18,6 +18,7 @@ import {
   MAX_SCRYPT_P,
   MAX_SCRYPT_R,
   MAX_STREAM_CHUNK_SIZE,
+  MIN_CREATE_SCRYPT_N,
   MIN_SCRYPT_N,
   MIN_STREAM_CHUNK_SIZE,
   ENVELOPE_ALG,
@@ -190,6 +191,50 @@ export async function createKeyring(masterPassword: string, options: CreateKeyri
     publicWriteKey: { alg: 'X25519', keyId, spki: bytesToBase64(publicSpki) },
     encryptedReadKey: {
       kdf: { name: 'scrypt', salt: bytesToBase64(salt), N: scryptN, r: DEFAULT_SCRYPT_R, p: DEFAULT_SCRYPT_P, keyLength: KEY_LENGTH },
+      aead: { name: 'AES-256-GCM', nonce: bytesToBase64(sealed.nonce), tag: bytesToBase64(sealed.tag) },
+      ciphertext: bytesToBase64(sealed.ciphertext),
+    },
+  };
+}
+
+export async function rewrapKeyring(
+  keyring: KeyringJson,
+  currentPassword: string,
+  newPassword: string,
+  options: CreateKeyringOptions = {},
+): Promise<KeyringJson> {
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+    throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'Passwords must be strings');
+  }
+  const report = checkPasswordStrength(newPassword);
+  if (options.onPasswordReport) options.onPasswordReport(report);
+  const publicKeyring = Boolean(options.publicKeyring ?? options.public_keyring);
+  if (publicKeyring) {
+    console.warn(
+      'DANGER: rewrapping a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.',
+    );
+  }
+  const allowWeak = options.allowWeakPassword === true || options.allow_weak_password === true || options.allowWeak === true || options.allow_weak === true;
+  if (publicKeyring && !report.allowedForPublicKeyring) {
+    throw new DataLockError(DataLockErrorCode.WEAK_MASTER_PASSWORD, 'A public Keyring requires a Master Password of at least 80 estimated bits');
+  }
+  if (!publicKeyring && !report.allowed && !allowWeak) {
+    throw new DataLockError(DataLockErrorCode.WEAK_MASTER_PASSWORD, 'Master Password is too weak to rewrap a Keyring; pass allowWeak to override');
+  }
+  const privatePkcs8 = await unwrapReadKey(keyring, currentPassword);
+  const previous = keyring.encryptedReadKey.kdf;
+  const allowLow = options.allowLowScryptN === true || options.allow_low_scrypt_n === true;
+  const nextN = previous.N < MIN_CREATE_SCRYPT_N && !allowLow ? MIN_CREATE_SCRYPT_N : previous.N;
+  const salt = randomBytes(32);
+  const wrapping = await scrypt(newPassword, salt, nextN, previous.r, previous.p);
+  const aad = textEncoder.encode(`${KEYRING_SCHEMA}:${keyring.publicWriteKey.keyId}:scrypt:AES-256-GCM`);
+  const sealed = await aesGcmEncrypt(wrapping, privatePkcs8, aad);
+  return {
+    schema: KEYRING_SCHEMA,
+    createdAt: keyring.createdAt,
+    publicWriteKey: { ...keyring.publicWriteKey },
+    encryptedReadKey: {
+      kdf: { name: 'scrypt', salt: bytesToBase64(salt), N: nextN, r: previous.r, p: previous.p, keyLength: KEY_LENGTH },
       aead: { name: 'AES-256-GCM', nonce: bytesToBase64(sealed.nonce), tag: bytesToBase64(sealed.tag) },
       ciphertext: bytesToBase64(sealed.ciphertext),
     },

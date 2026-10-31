@@ -254,6 +254,38 @@ class HxDataLockTest {
     }
 
     @Test
+    fun rewrapKeepsTheReadKeyAndRejectsAWeakPublicPassword() {
+        val password = "correct horse battery staple for hx datalock"
+        val keyring = HxDataLock.createKeyring(password, CreateKeyringOptions(scryptN = 16384, allowLowScryptN = true))
+        val user = HxDataLock.makeUserDataLock(keyring, password)
+        val envelope = user.lockText("still mine")
+        val rewrapped = HxDataLock.rewrapKeyring(
+            keyring,
+            password,
+            password,
+            RewrapOptions(allowLowScryptN = true),
+        )
+        assertEquals(keyring.keyId, rewrapped.keyId)
+        val opened = HxDataLock.makeUserDataLock(rewrapped, password)
+        assertEquals("still mine", opened.openText(envelope))
+        val wrong = assertFailsWith<DataLockException> {
+            HxDataLock.makeUserDataLock(rewrapped, "not-the-password")
+        }
+        assertEquals(DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING, wrong.code)
+        val rejected = assertFailsWith<DataLockException> {
+            HxDataLock.rewrapKeyring(
+                keyring,
+                password,
+                "password",
+                RewrapOptions(publicKeyring = true, allowWeakPassword = true, allowLowScryptN = true),
+            )
+        }
+        assertEquals(DataLockErrorCode.WEAK_MASTER_PASSWORD, rejected.code)
+        user.close()
+        opened.close()
+    }
+
+    @Test
     fun createRejectsScryptNBelowTheCreateFloor() {
         val rejected = assertFailsWith<DataLockException> {
             HxDataLock.createKeyring("correct horse battery staple for hx datalock", CreateKeyringOptions(scryptN = 16384))

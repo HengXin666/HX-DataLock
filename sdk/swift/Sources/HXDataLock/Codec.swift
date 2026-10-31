@@ -9,7 +9,13 @@ public enum DataLockError: Error, Equatable {
 public struct PasswordStrengthReport: Sendable {
     public var level: String
     public var allowed: Bool
+    public var warnings: [String]
+    public var suggestions: [String]
     public var estimatedEntropyBits: Double
+    public var compromised: Bool
+    public var score: Int
+    public var guessesLog10: Double
+    public var allowedForPublicKeyring: Bool
 }
 
 enum Codec {
@@ -86,10 +92,39 @@ enum Codec {
         let shared = try priv.sharedSecretFromKeyAgreement(with: pub)
         return shared.withUnsafeBytes { Data($0) }
     }
+
+    static func jsonInt(_ value: Any?) -> Int {
+        if let number = value as? Int { return number }
+        if let number = value as? NSNumber { return number.intValue }
+        return 0
+    }
+
+    static func aesSeal(key: Data, nonce: Data, plaintext: Data, aad: Data) throws -> Data {
+        let box = try AES.GCM.seal(
+            plaintext,
+            using: SymmetricKey(data: key),
+            nonce: try AES.GCM.Nonce(data: nonce),
+            authenticating: aad
+        )
+        return box.ciphertext + box.tag
+    }
 }
 
 public enum HxDataLock {
-    public static func createKeyring(masterPassword: String, scryptN: Int = 262144, allowLowScryptN: Bool = false) throws -> [String: Any] {
+    public static func createKeyring(
+        masterPassword: String,
+        scryptN: Int = 262144,
+        allowLowScryptN: Bool = false,
+        allowWeakPassword: Bool = false,
+        publicKeyring: Bool = false
+    ) throws -> [String: Any] {
+        let report = PasswordStrength.check(masterPassword)
+        if publicKeyring && !report.allowedForPublicKeyring {
+            throw DataLockError.code("WEAK_MASTER_PASSWORD", "A public Keyring requires a Master Password of at least 80 estimated bits")
+        }
+        if !publicKeyring && !report.allowed && !allowWeakPassword {
+            throw DataLockError.code("WEAK_MASTER_PASSWORD", "Master Password is too weak to create a Keyring")
+        }
         if scryptN < 131072 && !allowLowScryptN {
             throw DataLockError.code("INSECURE_SCRYPT_PARAMETERS", "scrypt N is below 2^17")
         }
@@ -152,6 +187,25 @@ public enum HxDataLock {
         ]
     }
 
+    public static func keyMaterial(keyring: [String: Any], masterPassword: String) throws -> (keyId: String, rawPrivate: Data, spki: Data) {
+        let write = keyring["publicWriteKey"] as? [String: Any] ?? [:]
+        let keyId = write["keyId"] as? String ?? ""
+        let spki = Data(base64Encoded: write["spki"] as? String ?? "") ?? Data()
+        let encrypted = keyring["encryptedReadKey"] as? [String: Any] ?? [:]
+        let kdf = encrypted["kdf"] as? [String: Any] ?? [:]
+        let aead = encrypted["aead"] as? [String: Any] ?? [:]
+        let salt = Data(base64Encoded: kdf["salt"] as? String ?? "") ?? Data()
+        let wrapping = try Codec.scrypt(password: masterPassword, salt: salt, n: Codec.jsonInt(kdf["N"]), r: Codec.jsonInt(kdf["r"]), p: Codec.jsonInt(kdf["p"]))
+        let privateDer = try Codec.aesOpen(
+            key: wrapping,
+            nonce: Data(base64Encoded: aead["nonce"] as? String ?? "") ?? Data(),
+            ciphertext: Data(base64Encoded: encrypted["ciphertext"] as? String ?? "") ?? Data(),
+            tag: Data(base64Encoded: aead["tag"] as? String ?? "") ?? Data(),
+            aad: Data("hxdl.keyring.v1:\(keyId):scrypt:AES-256-GCM".utf8)
+        )
+        return (keyId, try Codec.rawPrivate(pkcs8: privateDer), spki)
+    }
+
     public static func openBytes(keyring: [String: Any], masterPassword: String, envelope: [String: Any]) throws -> Data {
         guard envelope["schema"] as? String == "hxdl.envelope.v1" else {
             throw DataLockError.code("UNSUPPORTED_SCHEMA", "envelope schema")
@@ -189,9 +243,106 @@ public enum HxDataLock {
             aad: openAad
         )
     }
+
+    public static func rewrapKeyring(
+        keyring: [String: Any],
+        currentPassword: String,
+        newPassword: String,
+        allowLowScryptN: Bool = false,
+        allowWeakPassword: Bool = false,
+        publicKeyring: Bool = false
+    ) throws -> [String: Any] {
+        let report = PasswordStrength.check(newPassword)
+        if publicKeyring && !report.allowedForPublicKeyring {
+            throw DataLockError.code("WEAK_MASTER_PASSWORD", "A public Keyring requires a Master Password of at least 80 estimated bits")
+        }
+        if !publicKeyring && !report.allowed && !allowWeakPassword {
+            throw DataLockError.code("WEAK_MASTER_PASSWORD", "Master Password is too weak to rewrap a Keyring")
+        }
+        let write = keyring["publicWriteKey"] as? [String: Any] ?? [:]
+        let keyId = write["keyId"] as? String ?? ""
+        let encrypted = keyring["encryptedReadKey"] as? [String: Any] ?? [:]
+        let kdf = encrypted["kdf"] as? [String: Any] ?? [:]
+        let aead = encrypted["aead"] as? [String: Any] ?? [:]
+        let salt = Data(base64Encoded: kdf["salt"] as? String ?? "") ?? Data()
+        let previousN = Codec.jsonInt(kdf["N"])
+        let wrapping = try Codec.scrypt(password: currentPassword, salt: salt, n: previousN, r: 8, p: 1)
+        let privateDer = try Codec.aesOpen(
+            key: wrapping,
+            nonce: Data(base64Encoded: aead["nonce"] as? String ?? "") ?? Data(),
+            ciphertext: Data(base64Encoded: encrypted["ciphertext"] as? String ?? "") ?? Data(),
+            tag: Data(base64Encoded: aead["tag"] as? String ?? "") ?? Data(),
+            aad: Data("hxdl.keyring.v1:\(keyId):scrypt:AES-256-GCM".utf8)
+        )
+        let nextN = previousN < 131072 && !allowLowScryptN ? 131072 : previousN
+        let nextSalt = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        let nextWrap = try Codec.scrypt(password: newPassword, salt: nextSalt, n: nextN, r: 8, p: 1)
+        let sealed = try Codec.aesSeal(key: nextWrap, plaintext: privateDer, aad: Data("hxdl.keyring.v1:\(keyId):scrypt:AES-256-GCM".utf8))
+        return [
+            "schema": "hxdl.keyring.v1",
+            "createdAt": keyring["createdAt"] as? String ?? isoNow(),
+            "publicWriteKey": write,
+            "encryptedReadKey": [
+                "kdf": [
+                    "name": "scrypt",
+                    "salt": nextSalt.base64EncodedString(),
+                    "N": nextN,
+                    "r": 8,
+                    "p": 1,
+                    "keyLength": 32,
+                ],
+                "aead": [
+                    "name": "AES-256-GCM",
+                    "nonce": sealed.nonce.base64EncodedString(),
+                    "tag": sealed.tag.base64EncodedString(),
+                ],
+                "ciphertext": sealed.ciphertext.base64EncodedString(),
+            ],
+        ]
+    }
+
+    public static func checkPasswordStrength(_ masterPassword: String) -> PasswordStrengthReport {
+        PasswordStrength.check(masterPassword)
+    }
+
+    public static func lockStream(keyId: String, recipientSpki: Data, plaintext: Data, chunkSize: Int, fileId: String? = nil, chunkIndex: Int? = nil) throws -> Data {
+        try StreamCodec.lock(keyId: keyId, recipientSpki: recipientSpki, plaintext: plaintext, chunkSize: chunkSize, fileId: fileId, chunkIndex: chunkIndex)
+    }
+
+    public static func openStream(keyId: String, rawPrivate: Data, recipientSpki: Data, container: Data) throws -> Data {
+        try StreamCodec.open(keyId: keyId, rawPrivate: rawPrivate, recipientSpki: recipientSpki, container: container)
+    }
+
+    public static func sealChunked(keyId: String, recipientSpki: Data, plaintext: Data, chunkSize: Int, fileId: String, version: Int = 1) throws -> (manifest: [String: Any], chunks: [Data]) {
+        try StreamCodec.sealChunked(keyId: keyId, recipientSpki: recipientSpki, plaintext: plaintext, chunkSize: chunkSize, fileId: fileId, version: version)
+    }
+
+    public static func openChunked(keyId: String, rawPrivate: Data, recipientSpki: Data, manifest: [String: Any], sealedChunks: [Data]) throws -> Data {
+        try StreamCodec.openChunked(keyId: keyId, rawPrivate: rawPrivate, recipientSpki: recipientSpki, manifest: manifest, sealedChunks: sealedChunks)
+    }
+
+    public static func generateAttestationKey() -> (privateKey: Data, publicSpki: Data) {
+        Attestation.generate()
+    }
+
+    public static func signEnvelope(privateKey: Data, envelopeJSON: Data, recipientKeyId: String, context: String = "") throws -> [String: Any] {
+        try Attestation.signEnvelope(privatePkcs8: privateKey, envelopeJSON: envelopeJSON, recipientKeyId: recipientKeyId, context: context)
+    }
+
+    public static func verifyEnvelope(attestation: [String: Any], envelopeJSON: Data, expectedSignerKeyId: String? = nil) throws {
+        try Attestation.verifyEnvelope(attestation: attestation, envelopeJSON: envelopeJSON, expectedSignerKeyId: expectedSignerKeyId)
+    }
+
+    public static func signManifest(privateKey: Data, issuer: String, payload: [String: Any]) throws -> [String: Any] {
+        try Attestation.signManifest(privatePkcs8: privateKey, issuer: issuer, payload: payload)
+    }
+
+    public static func verifySignedManifest(_ document: [String: Any], expectedSignerKeyId: String? = nil) throws {
+        try Attestation.verifyManifest(document, expectedSignerKeyId: expectedSignerKeyId)
+    }
 }
 
-private func isoNow() -> String {
+func isoNow() -> String {
     let millis = Int((Date().timeIntervalSince1970 * 1000).rounded())
     let seconds = millis / 1000
     let fraction = millis % 1000

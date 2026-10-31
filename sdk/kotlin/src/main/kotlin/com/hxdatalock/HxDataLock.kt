@@ -17,6 +17,12 @@ data class CreateKeyringOptions(
     val publicKeyring: Boolean = false,
 )
 
+data class RewrapOptions(
+    val allowWeakPassword: Boolean = false,
+    val allowLowScryptN: Boolean = false,
+    val publicKeyring: Boolean = false,
+)
+
 object HxDataLock {
     fun checkPasswordStrength(masterPassword: String): PasswordStrengthReport = PasswordStrength.check(masterPassword)
 
@@ -25,6 +31,11 @@ object HxDataLock {
 
     fun createKeyring(masterPassword: String, options: CreateKeyringOptions = CreateKeyringOptions()): Keyring {
         val report = PasswordStrength.check(masterPassword)
+        if (options.publicKeyring) {
+            System.err.println(
+                "DANGER: creating a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.",
+            )
+        }
         if (options.publicKeyring && !report.allowedForPublicKeyring) {
             throw DataLockException(
                 DataLockErrorCode.WEAK_MASTER_PASSWORD,
@@ -71,6 +82,56 @@ object HxDataLock {
         )
         keyring.verify()
         return keyring
+    }
+
+    fun rewrapKeyring(
+        keyring: Keyring,
+        currentPassword: String,
+        newPassword: String,
+        options: RewrapOptions = RewrapOptions(),
+    ): Keyring {
+        keyring.verify()
+        val report = PasswordStrength.check(newPassword)
+        if (options.publicKeyring) {
+            System.err.println(
+                "DANGER: rewrapping a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.",
+            )
+        }
+        if (options.publicKeyring && !report.allowedForPublicKeyring) {
+            throw DataLockException(
+                DataLockErrorCode.WEAK_MASTER_PASSWORD,
+                "A public Keyring requires a Master Password of at least 80 estimated bits",
+            )
+        }
+        if (!options.publicKeyring && !report.allowed && !options.allowWeakPassword) {
+            throw DataLockException(
+                DataLockErrorCode.WEAK_MASTER_PASSWORD,
+                "Master Password is too weak to rewrap a Keyring; pass allowWeakPassword = true to override",
+            )
+        }
+        val encrypted = keyring.raw.mapField("encryptedReadKey", DataLockErrorCode.INVALID_KEYRING)
+        val readKey = CryptoCodec.unwrapReadKey(encrypted, keyring.keyId, currentPassword)
+        val previous = encrypted.mapField("kdf", DataLockErrorCode.INVALID_KEYRING)
+        val previousN = jsonInt(previous["N"])
+        val nextN = if (previousN < MIN_CREATE_SCRYPT_N && !options.allowLowScryptN) MIN_CREATE_SCRYPT_N else previousN
+        val kdf = linkedMapOf<String, Any?>(
+            "name" to "scrypt",
+            "salt" to CryptoCodec.b64(CryptoCodec.randomBytes(32)),
+            "N" to nextN,
+            "r" to jsonInt(previous["r"]),
+            "p" to jsonInt(previous["p"]),
+            "keyLength" to KEY_LENGTH,
+        )
+        val rewrapped = Keyring(
+            linkedMapOf(
+                "schema" to KEYRING_SCHEMA,
+                "createdAt" to keyring.raw["createdAt"],
+                "publicWriteKey" to LinkedHashMap(keyring.publicWriteKey),
+                "encryptedReadKey" to CryptoCodec.sealReadKey(keyring.keyId, newPassword, kdf, CryptoCodec.privateDer(readKey)),
+            ),
+        )
+        rewrapped.verify()
+        return rewrapped
     }
 
     fun makeUserDataLock(keyring: Keyring, masterPassword: String): UserDataLock {
@@ -299,6 +360,12 @@ internal fun encodeStrictUtf8(text: String): ByteArray {
     } catch (ex: CharacterCodingException) {
         throw DataLockException(DataLockErrorCode.INVALID_UTF8, "Text is not valid UTF-8", ex)
     }
+}
+
+private fun jsonInt(value: Any?): Int = when (value) {
+    is Int -> value
+    is Number -> value.toInt()
+    else -> throw DataLockException(DataLockErrorCode.INVALID_KEYRING, "scrypt parameter is not an integer")
 }
 
 private fun validateScryptN(value: Int) {
