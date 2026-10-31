@@ -81,7 +81,7 @@ keyring.write("keyring.hxdl.json")
 public_key = export_public_key_document(keyring)
 public_key.write("public.hxdl.json")
 
-sender = makeSenderDataLock(public_key)
+sender = makeSenderDataLock(public_key, expected_key_id=public_key.key_id)
 envelope = sender.lockText("hello from python")
 envelope.write("message.hxdl.json")
 
@@ -107,7 +107,7 @@ keyring = load_keyring("keyring.hxdl.json")
 public_key = export_public_key_document(keyring)
 public_key.write("public.hxdl.json")
 
-sender = makeSenderDataLock(public_key)
+sender = makeSenderDataLock(public_key, expected_key_id=public_key.key_id)
 sender.lockFile("plain.txt", "plain.txt.hxdl.json")
 ```
 
@@ -133,7 +133,12 @@ user.close()
 ```python
 from hx_datalock import open_file, send_file_with_public_doc
 
-send_file_with_public_doc("public.hxdl.json", "plain.txt", "plain.txt.hxdl.json")
+send_file_with_public_doc(
+    "public.hxdl.json",
+    "plain.txt",
+    "plain.txt.hxdl.json",
+    expected_key_id="x25519:...",
+)
 open_file("keyring.hxdl.json", "plain.txt.hxdl.json", "plain.opened.txt", "master password")
 ```
 
@@ -144,7 +149,7 @@ open_file("keyring.hxdl.json", "plain.txt.hxdl.json", "plain.opened.txt", "maste
 ```sh
 uv run hxdl init --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 uv run hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
-uv run hxdl lock --public public.hxdl.json --in plain.txt --out plain.txt.hxdl.json
+uv run hxdl lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
 uv run hxdl open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
@@ -153,13 +158,13 @@ uv run hxdl open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plai
 ```sh
 hxdl init --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 hxdl export-public --keyring keyring.hxdl.json --out public.hxdl.json
-hxdl lock --public public.hxdl.json --in plain.txt --out plain.txt.hxdl.json
+hxdl lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
 hxdl open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
 SDK 不读取环境变量。只有 CLI 会在传入 `--password-env` 时读取指定环境变量。
 
-发送方环境建议 pin 住预期的 Public Key Document keyId，避免公钥文档被替换后继续加密给错误收件方：
+`lock` 默认必须 pin 住预期的 Public Key Document keyId。不传 `--expect-key-id` 会失败；只有文档来源已经经过确认时才使用 `--allow-unpinned-public-key`：
 
 ```sh
 uv run hxdl lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
@@ -167,15 +172,18 @@ uv run hxdl lock --public public.hxdl.json --expect-key-id "x25519:..." --in pla
 
 ## API
 
-### `create_keyring(master_password, *, scrypt_n=DEFAULT_SCRYPT_N)`
+### `create_keyring(master_password, *, scrypt_n=DEFAULT_SCRYPT_N, allow_weak_password=False, allow_low_scrypt_n=False)`
 
-生成新的 Keyring。返回对象可调用 `write(path)` 写入 JSON 文件。
+生成新的 Keyring。返回对象可调用 `write(path)` 写入 JSON 文件。弱 Master Password 默认拒绝，错误码是 `WEAK_MASTER_PASSWORD`。已经存在的 Keyring 仍可打开。
 
 可选参数:
 
-- `scrypt_n`: scrypt N 参数, 默认使用 SDK 内部 v1 默认值。
+- `scrypt_n`: scrypt N 参数, 默认 `2^18`。新建 Keyring 要求 `N >= 2^17`，否则抛出 `INSECURE_SCRYPT_PARAMETERS`。读取旧 Keyring 仍接受低至 `2^14` 的 N。
+- `allow_weak_password`: 显式允许弱 Master Password 创建 Keyring。
+- `allow_low_scrypt_n`: 显式允许低于创建下限、但仍在读取范围内的 scrypt N。
+- `on_password_report`: 在派生密钥前接收 Password Strength Report。
 
-Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台会把文件权限收敛为仅所有者可读写；应用仍应把 Keyring 当作私有本地文件保存和备份。
+Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台会把文件权限收敛为仅所有者可读写。Keyring 只能放在私有本地存储，不能提交到公共 GitHub 或其他公共存储。交给发送方的是 Public Key Document。
 
 ### `load_keyring(path)`
 
@@ -185,13 +193,11 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台
 
 从 Keyring 导出 Public Key Document。这个文档不包含 Read Key 材料, 可以交给只负责写入的发送方。
 
-### `makeSenderDataLock(publicKeyDocument)`
+### `makeSenderDataLock(publicKeyDocument, *, expected_key_id, allow_unpinned_public_key=False)`
 
 创建发送方 DataLock。输入必须是 Public Key Document, 不能是完整 Keyring。
 
-可选参数:
-
-- `expected_key_id`: 如果提供，SDK 会先确认 Public Key Document 的 `keyId` 与预期值一致；不一致时抛出 `INVALID_PUBLIC_KEY_DOCUMENT`。
+`expected_key_id` 默认必填，用来 pin 收件方 keyId。不传时抛出 `UNPINNED_PUBLIC_KEY`。与文档不一致时抛出 `INVALID_PUBLIC_KEY_DOCUMENT`。只有调用方已经通过其他方式确认文档来源时，才传 `allow_unpinned_public_key=True`。
 
 返回对象:
 
@@ -217,7 +223,7 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台
 
 使用 Public Key Document 加密本地文件并写出 Data Envelope。推荐发送方环境使用这个 helper, 避免把完整 Keyring 传入写入环境。
 
-可选参数 `expected_key_id` 可用于同样的 keyId pinning。
+`expected_key_id` 同样默认必填；`allow_unpinned_public_key=True` 是显式放弃 pinning 的出口。
 
 ### `verify_public_key_document_key_id(publicKeyDocument, expected_key_id)`
 
@@ -229,7 +235,7 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 在 POSIX 平台
 
 ### `check_password_strength(master_password)`
 
-返回 Password Strength Report。弱主密码会产生 warnings 和 suggestions, 但 v1 不阻止创建 Keyring。
+返回 Password Strength Report。弱主密码的 `allowed` 为 false，`create_keyring` 默认拒绝创建；`allow_weak_password=True` 才继续。打开已有 Keyring 不看这份报告。
 
 ### `DataLockError` 和 `DataLockErrorCode`
 

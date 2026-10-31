@@ -66,8 +66,8 @@ Master Password + Keyring
 
 流程：
 
-1. Python/Node full SDK 先运行 Password Strength Policy。v1 只产生 Password Strength Report，不阻止弱密码继续创建 Keyring。Kotlin v1 不暴露 Password Strength Report。
-2. 校验 `scryptN`：必须是 2 的幂且不小于 `16384`。默认值是 `2^18 = 262144`。
+1. Python/Node full SDK 先运行 Password Strength Policy，并把 Password Strength Report 交给调用方。弱 Master Password 默认不能创建 Keyring，除非显式传入 `allow_weak_password` / `allowWeakPassword`。Kotlin 不暴露 Report，但 `createKeyring` 使用同一条弱/非弱规则，并用 `allowWeakPassword` 作为显式放行。已经存在的 Keyring 打开时不再检查强度。
+2. 校验 `scryptN`：必须是 2 的幂。读取旧 Keyring 时允许 `2^14` 到 `2^20`。新建 Keyring 默认要求 `N >= 2^17`，更低的合法 N 需要 `allow_low_scrypt_n` / `allowLowScryptN`。默认值是 `2^18 = 262144`。
 3. 生成一对 X25519 密钥：
    - 公钥是 Write Key。
    - 私钥是 Read Key。
@@ -186,7 +186,7 @@ Public Key Document 结构：
 入口：
 
 - Sender DataLock:
-  - Python/Node: `makeSenderDataLock(publicKeyDocument).lockBytes(payloadBytes)`
+  - Python/Node: `makeSenderDataLock(publicKeyDocument, expected_key_id=...).lockBytes(payloadBytes)`，默认必须 pin 收件方 keyId。
 - User DataLock:
   - Python/Node/Kotlin: `makeUserDataLock(...).lockBytes(payloadBytes)` 或等价 Kotlin API。
 - 兼容/便捷 API:

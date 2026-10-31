@@ -49,7 +49,10 @@ async function main(argv = process.argv.slice(2)) {
   const envelopePath = requireOption(options, 'envelope');
   const outputPath = requireOption(options, 'out');
 
-  const sender = makeSenderDataLock(JSON.parse(readFileSync(publicPath, 'utf8')));
+  const publicDocument = JSON.parse(readFileSync(publicPath, 'utf8'));
+  const sender = makeSenderDataLock(publicDocument, {
+    expectedKeyId: requireOption(options, 'expect-key-id'),
+  });
   sender.lockFile(inputPath, envelopePath);
 
   const user = makeUserDataLock(loadKeyring(keyringPath), {

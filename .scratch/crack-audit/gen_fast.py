@@ -15,7 +15,7 @@ CASES = [
 ]
 idx=[]
 for name,pw,tier in CASES:
-    p = OUT/f"{name}.json"; init_keyring(p, pw, scrypt_n=2**14)
+    p = OUT/f"{name}.json"; init_keyring(p, pw, scrypt_n=2**14, allow_weak_password=True, allow_low_scrypt_n=True)
     idx.append({"case":name,"tier":tier,"password":pw,"keyring":str(p)})
 (OUT/"index.json").write_text(json.dumps(idx,ensure_ascii=False,indent=2),encoding="utf-8")
 print(f"{len(idx)} 个快速目标 (N=2^14) 已生成")

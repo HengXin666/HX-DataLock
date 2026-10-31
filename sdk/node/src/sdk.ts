@@ -7,6 +7,8 @@ import {
   KEY_LENGTH,
   KEYRING_SCHEMA,
   MAX_KEYRING_JSON_BYTES,
+  MIN_CREATE_SCRYPT_N,
+  MIN_SCRYPT_N,
   PUBLIC_KEY_SCHEMA,
 } from './constants.js';
 import { Keyring, PublicKeyDocument } from './documents.js';
@@ -25,13 +27,28 @@ import { isStableJson } from './json.js';
 import { checkPasswordStrength } from './password-strength.js';
 
 export function createKeyring(masterPassword, options: any = {}) {
-  // ADR 0023 makes this a cross-language contract: the report must reach the
-  // caller rather than being discarded.
+  // ADR 0023 makes the report a cross-language contract: it must reach the
+  // caller rather than being discarded. ADR 0025 then refuses a weak report
+  // unless the caller opts in. Opening an existing Keyring does not consult it.
   const report = checkPasswordStrength(masterPassword);
   const onReport = options.onPasswordReport ?? options.on_password_report;
   if (typeof onReport === 'function') onReport(report);
+  const allowWeak = options.allowWeakPassword === true || options.allow_weak_password === true;
+  if (report.allowed === false && !allowWeak) {
+    throw new DataLockError(
+      DataLockErrorCode.WEAK_MASTER_PASSWORD,
+      'Master Password is too weak to create a Keyring. Pass allowWeakPassword: true to create one anyway. Existing Keyrings can still be opened.',
+    );
+  }
   const scryptN = Number(options.scryptN || options.scrypt_n || DEFAULT_SCRYPT_N);
   validateScryptN(scryptN);
+  const allowLow = options.allowLowScryptN === true || options.allow_low_scrypt_n === true;
+  if (scryptN < MIN_CREATE_SCRYPT_N && !allowLow) {
+    throw new DataLockError(
+      DataLockErrorCode.INSECURE_SCRYPT_PARAMETERS,
+      `scrypt N ${scryptN} is below the create-time minimum ${MIN_CREATE_SCRYPT_N}. Readers still accept Keyrings down to ${MIN_SCRYPT_N}. Pass allowLowScryptN: true to create one anyway.`,
+    );
+  }
   const { publicKey, privateKey } = generateKeyPairSync('x25519');
   const publicDer = publicKey.export({ format: 'der', type: 'spki' });
   const privateDer = privateKey.export({ format: 'der', type: 'pkcs8' });
@@ -127,8 +144,15 @@ export function makeSenderDataLock(publicKeyDocument, options: any = {}) {
   }
   const document = publicKeyDocument instanceof PublicKeyDocument ? publicKeyDocument : new PublicKeyDocument(publicKeyDocument);
   document.verify();
-  if (options.expectedKeyId || options.expected_key_id) {
-    verifyPublicKeyDocumentKeyId(document, options.expectedKeyId || options.expected_key_id);
+  const expectedKeyId = options.expectedKeyId || options.expected_key_id;
+  const allowUnpinned = options.allowUnpinnedPublicKey === true || options.allow_unpinned_public_key === true;
+  if (expectedKeyId) {
+    verifyPublicKeyDocumentKeyId(document, expectedKeyId);
+  } else if (!allowUnpinned) {
+    throw new DataLockError(
+      DataLockErrorCode.UNPINNED_PUBLIC_KEY,
+      'Sender DataLock requires expectedKeyId so a replaced Public Key Document cannot be used by accident. Pass allowUnpinnedPublicKey: true only when the document is already authenticated.',
+    );
   }
   return new SenderDataLock(document);
 }

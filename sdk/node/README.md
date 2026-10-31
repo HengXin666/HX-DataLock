@@ -49,7 +49,7 @@ keyring.write('keyring.hxdl.json');
 const publicKey = exportPublicKeyDocument(keyring);
 publicKey.write('public.hxdl.json');
 
-const sender = makeSenderDataLock(publicKey);
+const sender = makeSenderDataLock(publicKey, { expectedKeyId: publicKey.keyId });
 const envelope = sender.lockText('hello from node');
 envelope.write('message.hxdl.json');
 
@@ -74,7 +74,7 @@ const keyring = loadKeyring('keyring.hxdl.json');
 const publicKey = exportPublicKeyDocument(keyring);
 publicKey.write('public.hxdl.json');
 
-const sender = makeSenderDataLock(publicKey);
+const sender = makeSenderDataLock(publicKey, { expectedKeyId: publicKey.keyId });
 sender.lockFile('plain.txt', 'plain.txt.hxdl.json');
 ```
 
@@ -99,7 +99,7 @@ user.close();
 ```sh
 node sdk/node/hx-datalock.mjs init --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 node sdk/node/hx-datalock.mjs export-public --keyring keyring.hxdl.json --out public.hxdl.json
-node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --in plain.txt --out plain.txt.hxdl.json
+node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
 node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
@@ -108,11 +108,11 @@ node sdk/node/hx-datalock.mjs open --keyring keyring.hxdl.json --in plain.txt.hx
 ```sh
 hxdl-node init --keyring keyring.hxdl.json --password-env HXDL_MASTER_PASSWORD
 hxdl-node export-public --keyring keyring.hxdl.json --out public.hxdl.json
-hxdl-node lock --public public.hxdl.json --in plain.txt --out plain.txt.hxdl.json
+hxdl-node lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
 hxdl-node open --keyring keyring.hxdl.json --in plain.txt.hxdl.json --out plain.opened.txt --password-env HXDL_MASTER_PASSWORD
 ```
 
-发送方环境建议 pin 住预期的 Public Key Document keyId，避免公钥文档被替换后继续加密给错误收件方：
+`lock` 默认必须 pin 住预期的 Public Key Document keyId。不传 `--expect-key-id` 会失败；只有文档来源已经经过确认时才使用 `--allow-unpinned-public-key`：
 
 ```sh
 node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --expect-key-id "x25519:..." --in plain.txt --out plain.txt.hxdl.json
@@ -122,13 +122,16 @@ node sdk/node/hx-datalock.mjs lock --public public.hxdl.json --expect-key-id "x2
 
 ### `createKeyring(masterPassword, options?)`
 
-生成新的 Keyring。返回对象可调用 `write(path)` 写入 JSON 文件。
+生成新的 Keyring。返回对象可调用 `write(path)` 写入 JSON 文件。弱 Master Password 默认拒绝，错误码是 `WEAK_MASTER_PASSWORD`。已经存在的 Keyring 仍可打开。
 
 可选参数:
 
-- `scryptN`: scrypt N 参数, 默认使用 SDK 内部 v1 默认值。
+- `scryptN`: scrypt N 参数, 默认 `2^18`。新建 Keyring 要求 `N >= 2^17`，否则抛出 `INSECURE_SCRYPT_PARAMETERS`。读取旧 Keyring 仍接受低至 `2^14` 的 N。
+- `allowWeakPassword`: 显式允许弱 Master Password 创建 Keyring。
+- `allowLowScryptN`: 显式允许低于创建下限、但仍在读取范围内的 scrypt N。
+- `onPasswordReport`: 在派生密钥前接收 Password Strength Report。
 
-Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-only 文件模式写出；应用仍应把 Keyring 当作私有本地文件保存和备份。
+Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-only 文件模式写出。Keyring 只能放在私有本地存储，不能提交到公共 GitHub 或其他公共存储。交给发送方的是 Public Key Document。
 
 ### `loadKeyring(path)`
 
@@ -138,13 +141,11 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-onl
 
 从 Keyring 导出 Public Key Document。这个文档不包含 Read Key 材料, 可以交给只负责写入的发送方。
 
-### `makeSenderDataLock(publicKeyDocument)`
+### `makeSenderDataLock(publicKeyDocument, options?)`
 
 创建发送方 DataLock。输入必须是 Public Key Document, 不能是完整 Keyring。
 
-可选参数:
-
-- `expectedKeyId`: 如果提供，SDK 会先确认 Public Key Document 的 `keyId` 与预期值一致；不一致时抛出 `INVALID_PUBLIC_KEY_DOCUMENT`。
+`expectedKeyId` 默认必填，用来 pin 收件方 keyId。不传时抛出 `UNPINNED_PUBLIC_KEY`。与文档不一致时抛出 `INVALID_PUBLIC_KEY_DOCUMENT`。只有调用方已经通过其他方式确认文档来源时，才传 `allowUnpinnedPublicKey: true`。
 
 返回对象:
 
@@ -168,7 +169,7 @@ Keyring 包含加密的 Read Key 材料。`Keyring.write(path)` 会用 owner-onl
 
 ### `checkPasswordStrength(masterPassword)`
 
-返回 Password Strength Report。弱主密码会产生 warnings 和 suggestions, 但 v1 不阻止创建 Keyring。
+返回 Password Strength Report。弱主密码的 `allowed` 为 false，`createKeyring` 默认拒绝创建；`allowWeakPassword: true` 才继续。打开已有 Keyring 不看这份报告。
 
 ### `verifyPublicKeyDocumentKeyId(publicKeyDocument, expectedKeyId)`
 

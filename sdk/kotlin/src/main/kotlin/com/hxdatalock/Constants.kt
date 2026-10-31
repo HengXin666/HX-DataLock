@@ -8,6 +8,7 @@ internal const val DEFAULT_SCRYPT_R = 8
 internal const val DEFAULT_SCRYPT_P = 1
 internal const val KEY_LENGTH = 32
 internal const val MIN_SCRYPT_N = 16384
+internal const val MIN_CREATE_SCRYPT_N = 131072
 internal const val MAX_SCRYPT_N = 1048576
 internal const val MAX_SCRYPT_R = 16
 internal const val MAX_SCRYPT_P = 4

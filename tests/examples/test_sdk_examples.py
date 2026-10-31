@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -28,6 +29,7 @@ def test_python_examples_send_and_decrypt_message(tmp_path: Path) -> None:
             "HXDL_TEST_PASSWORD",
             "--scrypt-n",
             "16384",
+            "--allow-low-scrypt-n",
         ],
         check=True,
         env=env,
@@ -46,12 +48,15 @@ def test_python_examples_send_and_decrypt_message(tmp_path: Path) -> None:
         check=True,
     )
 
+    public_key_id = json.loads(public_path.read_text(encoding="utf-8"))["publicWriteKey"]["keyId"]
     subprocess.run(
         [
             sys.executable,
             "examples/py/send_message.py",
             "--public",
             str(public_path),
+            "--expect-key-id",
+            public_key_id,
             "--in",
             str(plain_path),
             "--out",
@@ -99,6 +104,7 @@ def test_node_example_locks_with_public_document_and_opens_with_keyring(tmp_path
             "HXDL_TEST_PASSWORD",
             "--scrypt-n",
             "16384",
+            "--allow-low-scrypt-n",
         ],
         check=True,
         env=env,
@@ -116,12 +122,15 @@ def test_node_example_locks_with_public_document_and_opens_with_keyring(tmp_path
         check=True,
     )
 
+    public_key_id = json.loads(public_path.read_text(encoding="utf-8"))["publicWriteKey"]["keyId"]
     subprocess.run(
         [
             "node",
             "examples/node/lock_and_open_file.mjs",
             "--public",
             str(public_path),
+            "--expect-key-id",
+            public_key_id,
             "--keyring",
             str(keyring_path),
             "--in",
