@@ -17,7 +17,7 @@ export ANDROID_HOME=/path/to/android-sdk
 gradle -p sdk/kotlin :android:assembleRelease
 ```
 
-The release archive is `sdk/kotlin/android/build/outputs/aar/android-release.aar`. It contains `classes.jar` with Sender, User, stream, manifest sealing, and password-strength types. The AAR depends on BouncyCastle `bcprov-jdk18on` (not `bcprov-jdk15on` or SpongyCastle), kotlinx-serialization, and `com.nulab-inc:zxcvbn`. The Android library strips BouncyCastle signature files (`META-INF/*.SF`, `*.DSA`, `*.RSA`) so they do not break APK packaging. Conscrypt stays the platform TLS provider; HX-DataLock asks BouncyCastle only for X25519 and scrypt. If the app already depends on another `org.bouncycastle:bcprov-*` artifact, exclude that one and keep `bcprov-jdk18on:1.81`:
+The release archive is `sdk/kotlin/android/build/outputs/aar/android-release.aar`. It contains `classes.jar` with Sender, User, stream, manifest sealing, and password-strength types. The AAR depends on BouncyCastle `bcprov-jdk18on` (not `bcprov-jdk15on` or SpongyCastle), kotlinx-serialization, and `com.nulab-inc:zxcvbn`. The Android library strips BouncyCastle signature files (`META-INF/*.SF`, `*.DSA`, `*.RSA`) and `META-INF/versions/9/OSGI-INF/MANIFEST.MF`, which `bcprov` and `bcpkix` both ship and which otherwise collide when the instrumented test APK is packaged. Conscrypt stays the platform TLS provider; HX-DataLock asks BouncyCastle only for X25519 and scrypt. If the app already depends on another `org.bouncycastle:bcprov-*` artifact, exclude that one and keep `bcprov-jdk18on:1.81`:
 
 ```kotlin
 configurations.configureEach {

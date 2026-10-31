@@ -21,6 +21,7 @@ android {
                 "META-INF/*.RSA",
                 "META-INF/BCKEY.SF",
                 "META-INF/BCKEY.DSA",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
             )
         }
     }

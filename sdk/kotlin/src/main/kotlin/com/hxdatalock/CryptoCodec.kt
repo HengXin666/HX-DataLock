@@ -16,6 +16,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Security
 import java.time.Instant
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.text.Normalizer
@@ -79,9 +80,6 @@ internal object CryptoCodec {
         }
     }
 
-    // Millisecond precision, matching Python and Node. ISO_INSTANT renders
-    // nanoseconds when the clock offers them, which would make stable-JSON
-    // signatures and text diffs disagree across languages.
     private fun isCanonicalBase64(text: String): Boolean {
         if (text.isEmpty() || text.length % 4 != 0) return false
         var padding = 0
@@ -96,8 +94,13 @@ internal object CryptoCodec {
         return true
     }
 
+    // ISO_INSTANT omits the fraction when it is zero, so a timestamp on a whole
+    // second fails the shared millisecond pattern. Always write three digits.
+    private val creationTimeFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
+
     fun utcNow(): String =
-        DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
+        creationTimeFormatter.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
 
     fun sha256Base64Url(data: ByteArray): String = b64Url.encodeToString(MessageDigest.getInstance("SHA-256").digest(data))
 
