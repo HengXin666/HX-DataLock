@@ -21,3 +21,6 @@ sdk/node/*.tgz
 shard-*.json
 sdk/kotlin/.gradle/
 sdk/kotlin/build/
+sdk/kotlin/android/build/
+sdk/kotlin/android/.gradle/
+sdk/swift/.build/

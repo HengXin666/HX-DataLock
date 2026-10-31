@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import x25519
 
-from .constants import ENVELOPE_SCHEMA, KEYRING_SCHEMA, MAX_PUBLIC_KEY_JSON_BYTES, PUBLIC_KEY_SCHEMA
+from .constants import (
+    ENVELOPE_SCHEMA,
+    KEYRING_SCHEMA,
+    MAX_ENVELOPE_JSON_BYTES,
+    MAX_PUBLIC_KEY_JSON_BYTES,
+    PUBLIC_KEY_SCHEMA,
+)
 from .crypto_codec import (
     require_creation_time,
     unwrap_read_key,
@@ -57,12 +64,33 @@ class Keyring:
 @dataclass(frozen=True)
 class DataEnvelope:
     raw: dict[str, Any]
+    _decoded: dict[str, bytes] | None = field(default=None, compare=False, repr=False)
 
     def to_json(self) -> str:
         return dumps_stable_json(self.raw)
 
+    def serialize(self) -> str:
+        return self.to_json()
+
     def write(self, path: str | Path) -> None:
         write_json_document(path, self.raw)
+
+    @classmethod
+    def parse(cls, text: str) -> "DataEnvelope":
+        """Parse and verify a Data Envelope from a JSON string. Does not decrypt."""
+        if not isinstance(text, str):
+            raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "Data Envelope JSON must be a string")
+        if len(text.encode("utf-8")) > MAX_ENVELOPE_JSON_BYTES:
+            raise DataLockError(DataLockErrorCode.OVERSIZED_FILE, "JSON document exceeds the v1 size limit")
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid") from exc
+        if not isinstance(raw, dict):
+            raise DataLockError(DataLockErrorCode.UNSUPPORTED_SCHEMA, "JSON document must be an object")
+        document = cls(raw)
+        document.verify()
+        return document
 
     @classmethod
     def read(cls, path: str | Path) -> "DataEnvelope":
@@ -71,6 +99,9 @@ class DataEnvelope:
         return document
 
     def verify(self) -> None:
+        ciphertext = self.raw.get("ciphertext") if isinstance(self.raw, dict) else None
+        if self._decoded is not None and getattr(self, "_decoded_ciphertext", None) == ciphertext:
+            return
         raw = self.raw
         if raw.get("schema") != ENVELOPE_SCHEMA:
             raise DataLockError(
@@ -78,7 +109,28 @@ class DataEnvelope:
                 f"Unsupported Data Envelope schema: {raw.get('schema')}",
             )
         validate_envelope_alg(raw)
-        validate_envelope_fields(raw)
+        decoded = validate_envelope_fields(raw)
+        object.__setattr__(self, "_decoded", decoded)
+        object.__setattr__(self, "_decoded_ciphertext", ciphertext)
+
+    def decoded_fields(self) -> dict[str, bytes]:
+        self.verify()
+        assert self._decoded is not None
+        return self._decoded
+
+    def inspect(self) -> dict[str, Any]:
+        """Return structural metadata without decrypting.
+
+        createdAt is not in the AAD. Trust it only after a successful open.
+        """
+        decoded = self.decoded_fields()
+        return {
+            "schema": self.raw["schema"],
+            "recipientKeyId": self.raw["recipientKeyId"],
+            "createdAt": self.raw["createdAt"],
+            "alg": dict(self.raw["alg"]),
+            "ciphertextBytes": len(decoded["ciphertext"]),
+        }
 
 
 @dataclass(frozen=True)

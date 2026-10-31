@@ -4,6 +4,11 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+    plugins {
+        kotlin("jvm") version "2.1.21"
+        kotlin("android") version "2.1.21"
+        id("com.android.library") version "8.7.3"
+    }
 }
 
 dependencyResolutionManagement {
@@ -15,3 +20,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "hx-datalock-kotlin"
+include("android")

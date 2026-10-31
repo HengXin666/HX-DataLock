@@ -11,17 +11,17 @@ private fun readJsonDocument(path: Path, maxBytes: Int): LinkedHashMap<String, A
     if (Files.size(path) > maxBytes) {
         throw DataLockException(DataLockErrorCode.OVERSIZED_FILE, "JSON document exceeds the v1 size limit")
     }
-    return StableJson.parse(Files.readString(path))
+    return StableJson.parse(Files.readAllBytes(path).toString(Charsets.UTF_8))
 }
 
 private fun writeJsonDocument(path: Path, text: String) {
     // Converge an existing file's mode rather than only setting it at creation,
     // matching the Keyring writer and the other SDKs.
     if ("posix" in path.fileSystem.supportedFileAttributeViews()) {
-        Files.writeString(path, text)
+        Files.write(path, text.toByteArray(Charsets.UTF_8))
         Files.setPosixFilePermissions(path, setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))
     } else {
-        Files.writeString(path, text)
+        Files.write(path, text.toByteArray(Charsets.UTF_8))
     }
 }
 
@@ -33,10 +33,10 @@ private fun writePrivateJsonDocument(path: Path, text: String) {
         } catch (_: FileAlreadyExistsException) {
             Files.setPosixFilePermissions(path, permissions)
         }
-        Files.writeString(path, text, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+        Files.write(path, text.toByteArray(Charsets.UTF_8), StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
         Files.setPosixFilePermissions(path, permissions)
     } else {
-        Files.writeString(path, text)
+        Files.write(path, text.toByteArray(Charsets.UTF_8))
     }
 }
 
@@ -88,7 +88,35 @@ data class DataEnvelope(val raw: LinkedHashMap<String, Any?>) {
         writeJsonDocument(path, toJson())
     }
 
+    fun inspect(): Map<String, Any?> {
+        verify()
+        val ciphertext = CryptoCodec.fromB64(raw["ciphertext"], "ciphertext", DataLockErrorCode.TAMPERED_ENVELOPE)
+        return mapOf(
+            "schema" to raw["schema"],
+            "recipientKeyId" to raw["recipientKeyId"],
+            "createdAt" to raw["createdAt"],
+            "alg" to raw["alg"],
+            "ciphertextBytes" to ciphertext.size,
+        )
+    }
+
     companion object {
+        fun parse(text: String): DataEnvelope {
+            val raw = try {
+                StableJson.parse(text)
+            } catch (ex: DataLockException) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid", ex)
+            } catch (ex: Exception) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid", ex)
+            }
+            if (raw["schema"] == null && !raw.containsKey("schema")) {
+                throw DataLockException(DataLockErrorCode.TAMPERED_ENVELOPE, "Data Envelope JSON is not valid")
+            }
+            val envelope = DataEnvelope(raw)
+            envelope.verify()
+            return envelope
+        }
+
         fun read(path: Path): DataEnvelope {
             val envelope = DataEnvelope(readJsonDocument(path, MAX_ENVELOPE_JSON_BYTES))
             envelope.verify()
@@ -101,6 +129,9 @@ data class PublicKeyDocument(val raw: LinkedHashMap<String, Any?>) {
     val keyId: String get() = raw.mapField("publicWriteKey", DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT)["keyId"] as String
 
     fun verify() {
+        if (raw["schema"] == KEYRING_SCHEMA) {
+            throw DataLockException(DataLockErrorCode.INVALID_PUBLIC_KEY_DOCUMENT, "Public Key Document must not be a full Keyring")
+        }
         if (raw["schema"] != PUBLIC_KEY_SCHEMA) {
             throw DataLockException(DataLockErrorCode.UNSUPPORTED_SCHEMA, "Unsupported Public Key Document schema: ${raw["schema"]}")
         }

@@ -3,6 +3,12 @@ package com.hxdatalock
 internal const val KEYRING_SCHEMA = "hxdl.keyring.v1"
 internal const val PUBLIC_KEY_SCHEMA = "hxdl.publicKey.v1"
 internal const val ENVELOPE_SCHEMA = "hxdl.envelope.v1"
+internal const val STREAM_SCHEMA = "hxdl.stream.v1"
+internal const val MANIFEST_SCHEMA = "hxdl.manifest.v1"
+internal const val DEFAULT_STREAM_CHUNK_SIZE = 1024 * 1024
+internal const val MIN_STREAM_CHUNK_SIZE = 1
+internal const val MAX_STREAM_CHUNK_SIZE = 8 * 1024 * 1024
+internal const val MAX_STREAM_HEADER_BYTES = 64 * 1024
 internal const val DEFAULT_SCRYPT_N = 262144
 internal const val DEFAULT_SCRYPT_R = 8
 internal const val DEFAULT_SCRYPT_P = 1

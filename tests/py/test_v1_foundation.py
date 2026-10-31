@@ -29,7 +29,8 @@ def test_weak_master_password_is_rejected_unless_the_caller_opts_in() -> None:
     assert weak_report["allowed"] is False
     assert weak_report["level"] == "weak"
     assert weak_report["warnings"]
-    assert weak_report["suggestions"]
+    assert weak_report["score"] <= 1
+    assert weak_report["estimatedEntropyBits"] <= 20
 
     strong_report = check_password_strength("correct horse battery staple for hx datalock")
     assert strong_report["allowed"] is True
@@ -74,10 +75,10 @@ def test_strength_report_flags_dictionary_passwords(password: str) -> None:
     """
     report = check_password_strength(password)
 
-    assert report["compromised"] is True
-    assert report["level"] == "weak"
-    assert report["estimatedEntropyBits"] <= 20
-    assert any("common-password lists" in warning for warning in report["warnings"])
+    assert report["allowed"] is False
+    assert report["level"] in {"weak", "fair"}
+    assert report["estimatedEntropyBits"] < 40
+    assert report["warnings"]
 
 
 def test_strength_report_does_not_flag_a_passphrase_or_a_random_string() -> None:
@@ -100,7 +101,8 @@ def test_strength_report_flags_repetition_and_sequences() -> None:
     for password in ("aaaaaaaa", "abcabcabc"):
         report = check_password_strength(password)
         assert report["level"] == "weak"
-        assert any("repetition" in warning for warning in report["warnings"])
+        assert report["allowed"] is False
+        assert report["warnings"]
 
 
 def test_master_password_uses_nfc_normalization_for_unlock() -> None:
@@ -429,7 +431,7 @@ def test_user_datalock_opens_and_locks_payloads_for_local_user() -> None:
     user.close()
     with pytest.raises(DataLockError) as exc_info:
         user.openBytes(envelope)
-    assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+    assert exc_info.value.code is DataLockErrorCode.DATALOCK_CLOSED
 
 
 def test_user_datalock_reports_expected_open_failure_codes() -> None:
@@ -469,7 +471,7 @@ def test_sdk_requires_explicit_master_password_even_when_environment_variable_ex
 
     with pytest.raises(DataLockError) as exc_info:
         makeUserDataLock(keyring, {})
-    assert exc_info.value.code is DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING
+    assert exc_info.value.code is DataLockErrorCode.INVALID_ARGUMENT
 
 
 def test_user_datalock_file_helpers_write_outputs_and_enforce_v1_limit(tmp_path: Path) -> None:

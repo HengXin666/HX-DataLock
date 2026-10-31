@@ -1,6 +1,6 @@
 # HX-DataLock
 
-HX-DataLock is a general-purpose encryption context for separating data writing from data reading. It treats public storage as hostile. A Keyring stays on private local storage. Public storage may hold Data Envelopes and Public Key Documents, never a Keyring.
+HX-DataLock is a general-purpose encryption context for separating data writing from data reading. It treats public storage as hostile. A Keyring stays on private local storage. Public storage may hold Data Envelopes and Public Key Documents. Publishing a Keyring is an explicit warned exception that demands about 80 bits of estimated entropy.
 
 ## Language
 
@@ -9,11 +9,11 @@ A strict Unicode secret memorized by the user and used locally to unwrap the Rea
 _Avoid_: Login password, account password
 
 **Password Strength Policy**:
-A local check that refuses a weak Master Password before a Keyring is created unless the caller explicitly opts in. It exists because length alone does not describe offline attack resistance for user-chosen passwords. Opening an existing Keyring does not re-run the policy.
+A local zxcvbn-style check that rejects a weak Master Password before a Keyring is created or rewrapped unless the caller explicitly opts in. A Keyring created for public storage also requires about 80 bits of estimated entropy, and that floor cannot be skipped. Opening an existing Keyring does not re-run the policy.
 _Avoid_: Password rule, length check
 
 **Password Strength Report**:
-A structured result from the Password Strength Policy containing a strength level, warnings, suggestions, and whether creation is allowed. A weak report blocks Keyring creation unless the caller passes the explicit weak-password opt-in.
+A structured result from the Password Strength Policy containing a strength level, a zxcvbn score, an entropy estimate, warnings, suggestions, and whether creation is allowed. Callers see it before key material is derived.
 _Avoid_: Password valid flag, password score only
 
 **Secret Residency Policy**:
@@ -65,8 +65,8 @@ The private recipient key that can decrypt Data Envelopes after it is unwrapped 
 _Avoid_: Private key, decrypt key
 
 **Keyring**:
-A private local document containing the Write Key and the Read Key encrypted under a key derived from the Master Password. It must not be published to public GitHub or other public storage. Senders receive a Public Key Document instead.
-_Avoid_: Key file, secret file, GitHub keyring
+A private local document containing the Write Key and the Read Key encrypted under a key derived from the Master Password. Senders receive a Public Key Document instead. Publishing a Keyring is an explicit warned exception, not the default.
+_Avoid_: Key file, secret file, public key file
 
 **Public Key Document**:
 A document containing only the Write Key and non-secret metadata. It is the only supported input for Write-only Senders because it omits all Master Password-related material, including the encrypted Read Key.
@@ -93,11 +93,11 @@ A Data Envelope that encrypts one complete byte sequence as a single authenticat
 _Avoid_: Whole blob, single-shot blob
 
 **Oversized File**:
-A file larger than 25 MB, which v1 rejects instead of encrypting as a Full Data Envelope. Oversized files belong to the deferred Chunked File Envelope design.
+A file larger than 25 MB, which a v1 Full Data Envelope rejects. Files above that limit use hxdl.stream.v1 or hxdl.manifest.v1.
 _Avoid_: Large file, stream file
 
 **Chunked File Envelope**:
-A deferred Data Envelope family for large files where the file is split into independently encrypted chunks plus authenticated file-level metadata. It is not part of the first supported SDK surface because chunk boundaries and parallel decrypt semantics need a stable compatibility design.
+The `hxdl.stream.v1` container and the `hxdl.manifest.v1` document. A stream encrypts one payload as ordered AEAD chunks. A manifest names independent chunks so an update can resend only the chunks whose plaintext changed. Neither format changes a v1 Data Envelope.
 _Avoid_: Big envelope, streamed blob
 
 **Public Storage**:

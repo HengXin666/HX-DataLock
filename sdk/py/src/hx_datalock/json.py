@@ -32,14 +32,26 @@ def write_private_bytes(path: str | Path, payload: bytes) -> None:
     """Write owner-only bytes, converging the mode even if the file pre-exists."""
     document_path = Path(path)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     mode = stat.S_IRUSR | stat.S_IWUSR
-    if os.name == "posix" and document_path.exists():
-        document_path.chmod(mode)
-    fd = os.open(document_path, flags, mode)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(payload)
-    if os.name == "posix":
-        document_path.chmod(mode)
+    try:
+        fd = os.open(document_path, flags, mode)
+    except OSError as exc:
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ARGUMENT,
+            "refusing to write a private document through a symlink or an unusable path",
+        ) from exc
+    try:
+        if os.name == "posix":
+            os.fchmod(fd, mode)
+        owned = fd
+        fd = -1
+        with os.fdopen(owned, "wb") as handle:
+            handle.write(payload)
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def write_private_json_document(path: str | Path, raw: dict[str, Any]) -> None:

@@ -1,10 +1,19 @@
-import { createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from 'node:crypto';
+import {
+  createPublicKey,
+  diffieHellman,
+  generateKeyPairSync,
+  hkdfSync,
+  randomBytes,
+  type KeyObject,
+} from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DataLockError, DataLockErrorCode } from './errors.js';
 import { ENVELOPE_ALG, ENVELOPE_SCHEMA, KEY_LENGTH, MAX_V1_FILE_BYTES } from './constants.js';
 import { DataEnvelope } from './documents.js';
-import { aadForEnvelope, b64, decryptAesGcm, encryptAesGcm, fromB64, utcNow } from './crypto-codec.js';
+import { aadForEnvelope, b64, decryptAesGcm, encryptAesGcm, utcNow } from './crypto-codec.js';
+import { lockStream, openChunked, openStream, sealChunked } from './stream.js';
+import type { ByteCursor, ByteSink, ChunkManifest, EnvelopeJson, SealChunkedOptions, StreamInfo, StreamLockOptions } from './types.js';
 
 /**
  * Detect unpaired UTF-16 surrogates.
@@ -14,7 +23,7 @@ import { aadForEnvelope, b64, decryptAesGcm, encryptAesGcm, fromB64, utcNow } fr
  * INVALID_UTF8 in that case; without this check the two SDKs disagreed about
  * whether the same input is lockable at all.
  */
-function hasLoneSurrogate(text) {
+function hasLoneSurrogate(text: string) {
   for (let i = 0; i < text.length; i += 1) {
     const unit = text.charCodeAt(i);
     if (unit >= 0xd800 && unit <= 0xdbff) {
@@ -28,7 +37,19 @@ function hasLoneSurrogate(text) {
   return false;
 }
 
-function readWithinV1Limit(inputPath) {
+function asPayloadBytes(payloadBytes: Buffer | Uint8Array) {
+  if (typeof payloadBytes === 'string') {
+    throw new DataLockError(
+      DataLockErrorCode.INVALID_ARGUMENT,
+      'lockBytes requires Buffer or Uint8Array, not a string; use lockText for text',
+    );
+  }
+  if (Buffer.isBuffer(payloadBytes)) return payloadBytes;
+  if (payloadBytes instanceof Uint8Array) return Buffer.from(payloadBytes);
+  throw new DataLockError(DataLockErrorCode.INVALID_ARGUMENT, 'lockBytes requires Buffer or Uint8Array');
+}
+
+function readWithinV1Limit(inputPath: string) {
   // Check before reading so an oversized file is never pulled into memory.
   if (statSync(inputPath).size > MAX_V1_FILE_BYTES) {
     throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support local files up to 25 MB');
@@ -36,7 +57,7 @@ function readWithinV1Limit(inputPath) {
   return readFileSync(inputPath);
 }
 
-function lockBytesWithPublicKey(keyId, publicWriteKey, payloadBytes) {
+function lockBytesWithPublicKey(keyId: string, publicWriteKey: KeyObject, payloadBytes: Buffer) {
   const ephemeral = generateKeyPairSync('x25519');
   const sharedSecret = diffieHellman({
     privateKey: ephemeral.privateKey,
@@ -65,13 +86,13 @@ function lockBytesWithPublicKey(keyId, publicWriteKey, payloadBytes) {
 }
 
 export class SenderDataLock {
-  publicKeyDocument: any;
+  publicKeyDocument: import('./documents.js').PublicKeyDocument;
 
-  constructor(publicKeyDocument) {
+  constructor(publicKeyDocument: import('./documents.js').PublicKeyDocument) {
     this.publicKeyDocument = publicKeyDocument;
   }
-  lockBytes(payloadBytes) {
-    const bytes = Buffer.isBuffer(payloadBytes) ? payloadBytes : Buffer.from(payloadBytes);
+  lockBytes(payloadBytes: Buffer | Uint8Array) {
+    const bytes = asPayloadBytes(payloadBytes);
     // Enforce the v1 limit here, not only in lockFile. Without it lockBytes can
     // produce a Full Data Envelope that every SDK then refuses to open, so the
     // SDK would emit documents it cannot read back.
@@ -81,7 +102,7 @@ export class SenderDataLock {
     this.publicKeyDocument.verify();
     return lockBytesWithPublicKey(this.publicKeyDocument.keyId, this.publicKeyDocument.publicWriteKey, bytes);
   }
-  lockText(text) {
+  lockText(text: string) {
     if (typeof text !== 'string') {
       throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'lockText requires text input');
     }
@@ -90,39 +111,68 @@ export class SenderDataLock {
     }
     return this.lockBytes(Buffer.from(text, 'utf8'));
   }
-  lockFile(inputPath, outputPath) {
+  lockFile(inputPath: string, outputPath: string) {
     const envelope = this.lockBytes(readWithinV1Limit(inputPath));
     envelope.write(outputPath);
     return envelope;
   }
+  lockStream(src: ByteCursor, dst: ByteSink, options: StreamLockOptions = {}): StreamInfo {
+    this.publicKeyDocument.verify();
+    return lockStream({
+      keyId: this.publicKeyDocument.keyId,
+      publicKey: this.publicKeyDocument.publicWriteKey,
+      src,
+      dst,
+      chunkSize: options.chunkSize,
+      fileId: options.fileId,
+      chunkIndex: options.chunkIndex,
+    });
+  }
+  sealChunked(src: ByteCursor, options: SealChunkedOptions) {
+    this.publicKeyDocument.verify();
+    return sealChunked({
+      keyId: this.publicKeyDocument.keyId,
+      publicKey: this.publicKeyDocument.publicWriteKey,
+      src,
+      chunkSize: options.chunkSize,
+      fileId: options.fileId,
+      version: options.version,
+      previousManifest: options.previousManifest,
+      previousSealed: options.previousSealed,
+    });
+  }
 }
 
 export class UserDataLock {
-  keyring: any;
-  readKey: any;
+  keyring: import('./documents.js').Keyring;
+  readKey: KeyObject | null;
 
-  constructor(keyring, readKey) {
+  constructor(keyring: import('./documents.js').Keyring, readKey: KeyObject) {
     this.keyring = keyring;
     this.readKey = readKey;
   }
   requireOpenReadKey() {
     if (!this.readKey) {
-      throw new DataLockError(DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING, 'User DataLock is closed');
+      throw new DataLockError(DataLockErrorCode.DATALOCK_CLOSED, 'User DataLock is closed');
     }
     return this.readKey;
   }
-  openBytes(envelope) {
+  openBytes(envelope: DataEnvelope | EnvelopeJson) {
     const readKey = this.requireOpenReadKey();
     this.keyring.verify();
     const dataEnvelope = envelope instanceof DataEnvelope ? envelope : new DataEnvelope(envelope);
     dataEnvelope.verify();
+    const decoded = dataEnvelope.decoded;
+    if (!decoded) {
+      throw new DataLockError(DataLockErrorCode.TAMPERED_ENVELOPE, 'Data Envelope failed verification');
+    }
     if (dataEnvelope.raw.recipientKeyId !== this.keyring.keyId) {
       throw new DataLockError(DataLockErrorCode.ENVELOPE_RECIPIENT_MISMATCH, 'Data Envelope recipient does not match the Keyring');
     }
     let ephemeralPublicKey;
     try {
       ephemeralPublicKey = createPublicKey({
-        key: fromB64(dataEnvelope.raw.ephemeralPublicKey, 'ephemeralPublicKey', DataLockErrorCode.TAMPERED_ENVELOPE, { maxLength: 512 }),
+        key: decoded.ephemeralPublicKey,
         format: 'der',
         type: 'spki',
       });
@@ -141,22 +191,22 @@ export class UserDataLock {
     const contentKey = Buffer.from(hkdfSync(
       'sha256',
       sharedSecret,
-      fromB64(dataEnvelope.raw.hkdfSalt, 'hkdfSalt', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 32 }),
+      decoded.hkdfSalt,
       Buffer.from(`${ENVELOPE_SCHEMA}:${this.keyring.keyId}`, 'utf8'),
       KEY_LENGTH,
     ));
     return decryptAesGcm(
       contentKey,
       {
-        nonce: fromB64(dataEnvelope.raw.nonce, 'nonce', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 12 }),
-        tag: fromB64(dataEnvelope.raw.tag, 'tag', DataLockErrorCode.TAMPERED_ENVELOPE, { exactLength: 16 }),
-        ciphertext: fromB64(dataEnvelope.raw.ciphertext, 'ciphertext', DataLockErrorCode.TAMPERED_ENVELOPE),
+        nonce: decoded.nonce,
+        tag: decoded.tag,
+        ciphertext: decoded.ciphertext,
       },
       aadForEnvelope(this.keyring.keyId, dataEnvelope.raw.alg),
       DataLockErrorCode.TAMPERED_ENVELOPE,
     );
   }
-  openText(envelope) {
+  openText(envelope: DataEnvelope | EnvelopeJson) {
     // Decryption runs first so its failures keep their own error code; only a
     // decoding failure of successfully decrypted bytes is INVALID_UTF8.
     const bytes = this.openBytes(envelope);
@@ -166,7 +216,7 @@ export class UserDataLock {
       throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'Data Envelope payload is not valid UTF-8');
     }
   }
-  openFile(inputPath, outputPath) {
+  openFile(inputPath: string, outputPath: string) {
     const plaintext = this.openBytes(DataEnvelope.read(inputPath));
     if (plaintext.length > MAX_V1_FILE_BYTES) {
       throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support local files up to 25 MB');
@@ -179,16 +229,16 @@ export class UserDataLock {
     if (process.platform !== 'win32') chmodSync(outputPath, 0o600);
     return plaintext;
   }
-  lockBytes(payloadBytes) {
+  lockBytes(payloadBytes: Buffer | Uint8Array) {
     this.requireOpenReadKey();
-    const bytes = Buffer.isBuffer(payloadBytes) ? payloadBytes : Buffer.from(payloadBytes);
+    const bytes = asPayloadBytes(payloadBytes);
     if (bytes.length > MAX_V1_FILE_BYTES) {
       throw new DataLockError(DataLockErrorCode.OVERSIZED_FILE, 'V1 Full Data Envelopes support payloads up to 25 MB');
     }
     this.keyring.verify();
     return lockBytesWithPublicKey(this.keyring.keyId, this.keyring.publicWriteKey, bytes);
   }
-  lockText(text) {
+  lockText(text: string) {
     if (typeof text !== 'string') {
       throw new DataLockError(DataLockErrorCode.INVALID_UTF8, 'lockText requires text input');
     }
@@ -197,10 +247,64 @@ export class UserDataLock {
     }
     return this.lockBytes(Buffer.from(text, 'utf8'));
   }
-  lockFile(inputPath, outputPath) {
+  lockFile(inputPath: string, outputPath: string) {
     const envelope = this.lockBytes(readWithinV1Limit(inputPath));
     envelope.write(outputPath);
     return envelope;
+  }
+  lockStream(src: ByteCursor, dst: ByteSink, options: StreamLockOptions = {}): StreamInfo {
+    this.requireOpenReadKey();
+    this.keyring.verify();
+    return lockStream({
+      keyId: this.keyring.keyId,
+      publicKey: this.keyring.publicWriteKey,
+      src,
+      dst,
+      chunkSize: options.chunkSize,
+      fileId: options.fileId,
+      chunkIndex: options.chunkIndex,
+    });
+  }
+  openChunked(manifest: ChunkManifest, sealedChunks: Array<Buffer | Uint8Array>) {
+    const readKey = this.requireOpenReadKey();
+    this.keyring.verify();
+    const recipientSpki = Buffer.from(this.keyring.publicWriteKey.export({ format: 'der', type: 'spki' }));
+    const parts: Buffer[] = [];
+    const info = openChunked({
+      keyId: this.keyring.keyId,
+      readKey,
+      recipientSpki,
+      manifest,
+      sealedChunks,
+      dst: { write(buf) { parts.push(Buffer.from(buf)); } },
+    });
+    return { info, plaintext: Buffer.concat(parts) };
+  }
+  sealChunked(src: ByteCursor, options: SealChunkedOptions) {
+    this.requireOpenReadKey();
+    this.keyring.verify();
+    return sealChunked({
+      keyId: this.keyring.keyId,
+      publicKey: this.keyring.publicWriteKey,
+      src,
+      chunkSize: options.chunkSize,
+      fileId: options.fileId,
+      version: options.version,
+      previousManifest: options.previousManifest,
+      previousSealed: options.previousSealed,
+    });
+  }
+  openStream(src: ByteCursor, dst: ByteSink): StreamInfo {
+    const readKey = this.requireOpenReadKey();
+    this.keyring.verify();
+    const recipientSpki = Buffer.from(this.keyring.publicWriteKey.export({ format: 'der', type: 'spki' }));
+    return openStream({
+      keyId: this.keyring.keyId,
+      readKey,
+      recipientSpki,
+      src,
+      dst,
+    });
   }
   close() {
     this.readKey = null;

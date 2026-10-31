@@ -1,5 +1,7 @@
 plugins {
-    kotlin("jvm") version "2.1.21"
+    kotlin("jvm")
+    id("com.android.library") apply false
+    kotlin("android") apply false
 }
 
 group = "com.hxdatalock"
@@ -13,6 +15,7 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.81")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.81")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    implementation("com.nulab-inc:zxcvbn:1.8.2")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
@@ -35,6 +38,14 @@ tasks.register<JavaExec>("runOpenExample") {
     dependsOn("compileExamplesKotlin")
     classpath = sourceSets["examples"].runtimeClasspath
     mainClass.set("OpenEnvelopeKt")
+    args = (project.findProperty("exampleArgs") as String? ?: "").split("|").filter { it.isNotEmpty() }
+}
+
+tasks.register<JavaExec>("runManifestExample") {
+    group = "examples"
+    dependsOn("compileExamplesKotlin")
+    classpath = sourceSets["examples"].runtimeClasspath
+    mainClass.set("ManifestRoundTripKt")
     args = (project.findProperty("exampleArgs") as String? ?: "").split("|").filter { it.isNotEmpty() }
 }
 

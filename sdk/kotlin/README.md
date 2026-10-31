@@ -9,12 +9,16 @@
 - 创建 v1 Keyring。
 - 从完整 Keyring 和 Master Password 创建 User DataLock。
 - `openBytes` / `openText` / `openFile`。
-- 本地 `lockBytes` / `lockText` / `lockFile`。
+- Sender DataLock：`HxDataLock.makeSenderDataLock`，只接受 Public Key Document。
+- 本地 `lockBytes` / `lockText` / `lockFile`。`lockText` 对孤立代理项抛出 `INVALID_UTF8`。
+- `DataEnvelope.parse(String)` 与 `inspect()`，解析和查看元数据都不解密。
+
+Android 可以依赖这个 JVM jar。仓库里没有 AAR 模块，iOS 也没有 Swift 实现。平台边界见 [docs/platforms.md](../../docs/platforms.md)。Kotlin 还没有 `hxdl.stream.v1`。
 - NFC 规范化 Master Password。
 - 读取 Python 和 Node/TypeScript SDK 生成的 v1 JSON 文档，按字段解析，不依赖字段顺序。
 - 暴露稳定 `DataLockErrorCode`。
 
-v1 不提供 Sender DataLock、Public Key Document 加密、CLI、分块文件、流式接口或平台 Keystore 集成。
+Kotlin 现在提供 Sender DataLock、`checkPasswordStrength`（zxcvbn，规则与 Python / TypeScript 相同）、以及 `lockStream` / `openStream`。新建 Keyring 的 scrypt `N` 必须 `>= 131072`，除非 `allowLowScryptN = true`。Android AAR 在 `sdk/kotlin/android`，用 `:android:assembleRelease` 构建。没有 CLI，也没有平台 Keystore。iOS 没有 Swift 实现。
 
 ## 快速示例
 

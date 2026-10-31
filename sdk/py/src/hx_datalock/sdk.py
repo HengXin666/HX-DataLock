@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import warnings
 from pathlib import Path
 from typing import Any, Callable
 
@@ -42,15 +43,37 @@ def create_keyring(
     scrypt_n: int = DEFAULT_SCRYPT_N,
     on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
     allow_weak_password: bool = False,
+    allow_weak: bool = False,
     allow_low_scrypt_n: bool = False,
+    public_keyring: bool = False,
 ) -> Keyring:
-    # ADR 0012 requires the Password Strength Report to reach the caller before
-    # any key material is derived. ADR 0025 then refuses a weak report unless
-    # the caller opts in. Opening an existing Keyring does not consult this check.
+    """Create a private Keyring unless ``public_keyring`` is set.
+
+    A weak Master Password is rejected. ``allow_weak_password`` (and the alias
+    ``allow_weak``) is an explicit override for tests and migration. It does not
+    bypass the 80-bit floor required when ``public_keyring`` is true, and it does
+    not lower the scrypt create-time floor. Opening an existing Keyring does not
+    consult this check.
+    """
+    if not isinstance(master_password, str):
+        raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "Master Password must be a string")
+    weak_ok = allow_weak_password or allow_weak
     report = check_password_strength(master_password)
     if on_password_report is not None:
         on_password_report(report)
-    if report["allowed"] is False and not allow_weak_password:
+    if public_keyring:
+        warnings.warn(
+            "Creating a Keyring for public storage. Anyone who can read it can guess the "
+            "Master Password offline. Publish a Public Key Document instead unless this is deliberate.",
+            UserWarning,
+            stacklevel=2,
+        )
+        if not report.get("allowedForPublicKeyring"):
+            raise DataLockError(
+                DataLockErrorCode.WEAK_MASTER_PASSWORD,
+                "A public Keyring requires a Master Password of at least 80 estimated bits",
+            )
+    elif not report["allowed"] and not weak_ok:
         raise DataLockError(
             DataLockErrorCode.WEAK_MASTER_PASSWORD,
             "Master Password is too weak to create a Keyring. "
@@ -108,14 +131,18 @@ def init_keyring(
     scrypt_n: int = DEFAULT_SCRYPT_N,
     on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
     allow_weak_password: bool = False,
+    allow_weak: bool = False,
     allow_low_scrypt_n: bool = False,
+    public_keyring: bool = False,
 ) -> Keyring:
     keyring = create_keyring(
         master_password,
         scrypt_n=scrypt_n,
         on_password_report=on_password_report,
         allow_weak_password=allow_weak_password,
+        allow_weak=allow_weak,
         allow_low_scrypt_n=allow_low_scrypt_n,
+        public_keyring=public_keyring,
     )
     keyring.write(path)
     return keyring
@@ -213,22 +240,52 @@ def makeSenderDataLock(
     return SenderDataLock(publicKeyDocument)
 
 
-def makeUserDataLock(keyring: Keyring | dict[str, Any], options: dict[str, Any]) -> UserDataLock:
+def make_user_data_lock(keyring: Keyring | dict[str, Any], master_password: str) -> UserDataLock:
+    """Unlock a User DataLock from a Master Password string."""
+    return makeUserDataLock(keyring, master_password)
+
+
+def makeUserDataLock(keyring: Keyring | dict[str, Any], options: dict[str, Any] | str) -> UserDataLock:
     if isinstance(keyring, dict):
         keyring = Keyring(keyring)
     if not isinstance(keyring, Keyring):
         raise DataLockError(DataLockErrorCode.INVALID_KEYRING, "User DataLock requires a full Keyring")
-    if not isinstance(options, dict) or not isinstance(options.get("masterPassword"), str):
-        raise DataLockError(
-            DataLockErrorCode.WRONG_MASTER_PASSWORD_OR_TAMPERED_KEYRING,
-            "User DataLock requires a Master Password",
-        )
-
-    read_key = keyring.unwrap_read_key(options["masterPassword"])
+    master_password = _master_password_from_options(options)
+    read_key = keyring.unwrap_read_key(master_password)
     return UserDataLock(keyring, read_key)
 
 
+def _master_password_from_options(options: dict[str, Any] | str) -> str:
+    if isinstance(options, str):
+        return options
+    if not isinstance(options, dict):
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ARGUMENT,
+            "User DataLock requires a Master Password string or {masterPassword: string}",
+        )
+    if "masterPassword" not in options:
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ARGUMENT,
+            "User DataLock options require masterPassword; other key names are not accepted",
+        )
+    unknown = sorted(key for key in options if key != "masterPassword")
+    if unknown:
+        raise DataLockError(
+            DataLockErrorCode.INVALID_ARGUMENT,
+            f"Unknown User DataLock option: {', '.join(unknown)}",
+        )
+    master_password = options["masterPassword"]
+    if not isinstance(master_password, str):
+        raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "masterPassword must be a string")
+    return master_password
+
+
 def encrypt_message(keyring: Keyring, plaintext: bytes) -> DataEnvelope:
+    warnings.warn(
+        "encrypt_message is deprecated; use UserDataLock.lockBytes or SenderDataLock.lockBytes",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     keyring.verify()
     return DataEnvelope(lock_bytes_with_public_key_raw(keyring.key_id, keyring.public_write_key, plaintext))
 
@@ -240,6 +297,11 @@ def encrypt_message_for_sender(
     expected_key_id: str | None = None,
     allow_unpinned_public_key: bool = False,
 ) -> DataEnvelope:
+    warnings.warn(
+        "encrypt_message_for_sender is deprecated; use makeSenderDataLock(...).lockBytes",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     sender = makeSenderDataLock(
         public_key_document,
         expected_key_id=expected_key_id,
@@ -249,8 +311,83 @@ def encrypt_message_for_sender(
 
 
 def decrypt_message(keyring: Keyring, master_password: str, envelope: DataEnvelope) -> bytes:
-    user = makeUserDataLock(keyring, {"masterPassword": master_password})
+    warnings.warn(
+        "decrypt_message runs scrypt on every call. Unlock once with make_user_data_lock and reuse openBytes.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    user = makeUserDataLock(keyring, master_password)
     return user.openBytes(envelope)
+
+
+def rewrap_keyring(
+    keyring: Keyring | dict[str, Any],
+    current_password: str,
+    new_password: str,
+    *,
+    on_password_report: Callable[[PasswordStrengthReport], None] | None = None,
+    allow_weak_password: bool = False,
+    allow_weak: bool = False,
+    allow_low_scrypt_n: bool = False,
+    public_keyring: bool = False,
+) -> Keyring:
+    """Wrap the same Read Key under a new Master Password.
+
+    The Recipient Key ID does not change, so existing v1 Data Envelopes still open.
+    This is not key rotation: a leaked copy of the old Keyring remains guessable.
+    """
+    if isinstance(keyring, dict):
+        keyring = Keyring(keyring)
+    if not isinstance(keyring, Keyring):
+        raise DataLockError(DataLockErrorCode.INVALID_KEYRING, "rewrap_keyring requires a full Keyring")
+    if not isinstance(new_password, str) or not isinstance(current_password, str):
+        raise DataLockError(DataLockErrorCode.INVALID_ARGUMENT, "Passwords must be strings")
+    report = check_password_strength(new_password)
+    if on_password_report is not None:
+        on_password_report(report)
+    if public_keyring:
+        warnings.warn(
+            "DANGER: rewrapping a Keyring for public storage. Anyone who can read it can guess the Master Password offline. Publish a Public Key Document instead unless this is deliberate.",
+            stacklevel=2,
+        )
+    if public_keyring and not report.get("allowedForPublicKeyring"):
+        raise DataLockError(
+            DataLockErrorCode.WEAK_MASTER_PASSWORD,
+            "A public Keyring requires a Master Password of at least 80 estimated bits",
+        )
+    if not report["allowed"] and not (allow_weak_password or allow_weak):
+        raise DataLockError(
+            DataLockErrorCode.WEAK_MASTER_PASSWORD,
+            "Master Password is too weak to rewrap a Keyring; pass allow_weak to override",
+        )
+    private_key = keyring.unwrap_read_key(current_password)
+    private_der = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    previous_kdf = keyring.raw["encryptedReadKey"]["kdf"]
+    next_n = previous_kdf["N"]
+    if next_n < MIN_CREATE_SCRYPT_N and not allow_low_scrypt_n:
+        next_n = MIN_CREATE_SCRYPT_N
+    kdf = {
+        "name": "scrypt",
+        "salt": b64(secrets.token_bytes(32)),
+        "N": next_n,
+        "r": previous_kdf["r"],
+        "p": previous_kdf["p"],
+        "keyLength": KEY_LENGTH,
+    }
+    rewrapped = Keyring(
+        {
+            "schema": KEYRING_SCHEMA,
+            "createdAt": keyring.raw["createdAt"],
+            "publicWriteKey": dict(keyring.raw["publicWriteKey"]),
+            "encryptedReadKey": seal_read_key(keyring.key_id, new_password, kdf, private_der),
+        }
+    )
+    rewrapped.verify()
+    return rewrapped
 
 
 def send_file_with_public_doc(
@@ -279,6 +416,11 @@ def send_file(keyring_path: str | Path, input_path: str | Path, output_path: str
     New sender environments should use send_file_with_public_doc(...) so they never
     receive full Keyring material. This helper is kept for v1 API compatibility.
     """
+    warnings.warn(
+        "send_file is deprecated; use send_file_with_public_doc so senders never receive a Keyring",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     keyring = load_keyring(keyring_path)
     envelope = encrypt_message(keyring, read_within_v1_limit(input_path))
     envelope.write(output_path)

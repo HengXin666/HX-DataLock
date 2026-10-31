@@ -16,6 +16,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Security
 import java.time.Instant
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.text.Normalizer
@@ -79,9 +80,6 @@ internal object CryptoCodec {
         }
     }
 
-    // Millisecond precision, matching Python and Node. ISO_INSTANT renders
-    // nanoseconds when the clock offers them, which would make stable-JSON
-    // signatures and text diffs disagree across languages.
     private fun isCanonicalBase64(text: String): Boolean {
         if (text.isEmpty() || text.length % 4 != 0) return false
         var padding = 0
@@ -96,8 +94,13 @@ internal object CryptoCodec {
         return true
     }
 
+    // ISO_INSTANT omits the fraction when it is zero, so a timestamp on a whole
+    // second fails the shared millisecond pattern. Always write three digits.
+    private val creationTimeFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
+
     fun utcNow(): String =
-        DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
+        creationTimeFormatter.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
 
     fun sha256Base64Url(data: ByteArray): String = b64Url.encodeToString(MessageDigest.getInstance("SHA-256").digest(data))
 
@@ -350,7 +353,7 @@ internal object CryptoCodec {
     private fun envelopeAad(keyId: String, alg: Map<String, String>): ByteArray =
         "$ENVELOPE_SCHEMA:$keyId:${alg["kem"]}:${alg["kdf"]}:${alg["aead"]}".toByteArray(Charsets.UTF_8)
 
-    private fun exchange(privateKey: X25519PrivateKeyParameters, publicKey: X25519PublicKeyParameters): ByteArray {
+    internal fun exchange(privateKey: X25519PrivateKeyParameters, publicKey: X25519PublicKeyParameters): ByteArray {
         val agreement = X25519Agreement()
         val secret = ByteArray(agreement.agreementSize)
         agreement.init(privateKey)
@@ -358,7 +361,7 @@ internal object CryptoCodec {
         return secret
     }
 
-    private fun hkdf(secret: ByteArray, salt: ByteArray, info: ByteArray): ByteArray {
+    internal fun hkdf(secret: ByteArray, salt: ByteArray, info: ByteArray): ByteArray {
         val generator = HKDFBytesGenerator(SHA256Digest())
         val out = ByteArray(KEY_LENGTH)
         generator.init(HKDFParameters(secret, salt, info))
@@ -366,9 +369,9 @@ internal object CryptoCodec {
         return out
     }
 
-    private data class Sealed(val ciphertext: ByteArray, val tag: ByteArray)
+    internal data class Sealed(val ciphertext: ByteArray, val tag: ByteArray)
 
-    private fun aesGcmEncrypt(key: ByteArray, nonce: ByteArray, plaintext: ByteArray, aad: ByteArray): Sealed {
+    internal fun aesGcmEncrypt(key: ByteArray, nonce: ByteArray, plaintext: ByteArray, aad: ByteArray): Sealed {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad)
@@ -376,7 +379,7 @@ internal object CryptoCodec {
         return Sealed(out.copyOfRange(0, out.size - 16), out.copyOfRange(out.size - 16, out.size))
     }
 
-    private fun aesGcmDecrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, tag: ByteArray, aad: ByteArray): ByteArray {
+    internal fun aesGcmDecrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, tag: ByteArray, aad: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad)

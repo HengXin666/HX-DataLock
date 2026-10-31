@@ -4,10 +4,13 @@ import argparse
 import getpass
 import json
 import os
+import secrets
+import sys
 import tempfile
 import time
 from pathlib import Path
 
+from .constants import MIN_CREATE_SCRYPT_N
 from .sdk import (
     DEFAULT_SCRYPT_N,
     DataLockError,
@@ -27,7 +30,22 @@ def _fail(code: str, message: str) -> None:
     raise SystemExit(f"HXDL_ERROR code={code} message={message}")
 
 
-def _read_password(password_env: str | None, *, confirm: bool = False) -> str:
+def _read_password(password_env: str | None, *, confirm: bool = False, password_stdin: bool = False) -> str:
+    if password_env and password_stdin:
+        _fail("INVALID_ARGUMENT", "Pass only one of --password-env and --password-stdin")
+    if password_stdin:
+        raw = sys.stdin.buffer.readline()
+        if raw.endswith(b"\n"):
+            raw = raw[:-1]
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+        try:
+            value = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            _fail("INVALID_ARGUMENT", "Master Password on stdin is not UTF-8")
+        if not value:
+            _fail("MISSING_MASTER_PASSWORD", "stdin did not contain a Master Password")
+        return value
     if password_env:
         value = os.environ.get(password_env)
         if not value:
@@ -42,11 +60,15 @@ def _read_password(password_env: str | None, *, confirm: bool = False) -> str:
 
 
 def _report_password_strength(report: dict) -> None:
-    """Surface the Password Strength Report before the Keyring is written.
-
-    A weak Master Password blocks creation unless --allow-weak-password is set.
-    """
-    print(f"Master Password strength: {report['level']}")
+    """Print the Password Strength Report. Creation still enforces the policy."""
+    entropy = report.get("estimatedEntropyBits")
+    score = report.get("score")
+    extra = ""
+    if entropy is not None:
+        extra += f" entropyBits={entropy}"
+    if score is not None:
+        extra += f" score={score}"
+    print(f"Master Password strength: {report['level']} allowed={report['allowed']}{extra}")
     for warning in report.get("warnings", []):
         print(f"  warning: {warning}")
     for suggestion in report.get("suggestions", []):
@@ -54,13 +76,36 @@ def _report_password_strength(report: dict) -> None:
 
 
 def _cmd_init(args: argparse.Namespace) -> None:
+    if args.public_keyring:
+        print(
+            "DANGER: this Keyring is being created for public storage. Anyone who downloads it "
+            "can guess the Master Password offline. The password must measure at least 80 bits. "
+            "Prefer a private Keyring and publish only the Public Key Document.",
+            file=sys.stderr,
+        )
+    if args.generate_password:
+        password = secrets.token_urlsafe(18)
+        print(
+            "Generated Master Password (save it offline; it is not stored in the Keyring):",
+            file=sys.stderr,
+        )
+        print(password, file=sys.stderr)
+    else:
+        password = _read_password(args.password_env, confirm=True, password_stdin=args.password_stdin)
+    if args.scrypt_n < MIN_CREATE_SCRYPT_N and not args.allow_low_scrypt_n:
+        print(
+            f"warning: scrypt N={args.scrypt_n} is below the create-time minimum {MIN_CREATE_SCRYPT_N} "
+            "and will be rejected unless --allow-low-scrypt-n is set",
+            file=sys.stderr,
+        )
     keyring = init_keyring(
         args.keyring,
-        _read_password(args.password_env, confirm=True),
+        password,
         scrypt_n=args.scrypt_n,
         on_password_report=_report_password_strength,
         allow_weak_password=args.allow_weak_password,
         allow_low_scrypt_n=args.allow_low_scrypt_n,
+        public_keyring=args.public_keyring,
     )
     print(f"Keyring written: {args.keyring}")
     print(f"Write Key ID: {keyring.key_id}")
@@ -72,17 +117,27 @@ def _cmd_init(args: argparse.Namespace) -> None:
 
 
 def _cmd_lock(args: argparse.Namespace) -> None:
+    document = PublicKeyDocument.read(args.public)
+    allow_unpinned = args.allow_unpinned_public_key or args.allow_unpinned_key
+    if not args.expect_key_id and not allow_unpinned:
+        _fail(
+            DataLockErrorCode.UNPINNED_PUBLIC_KEY.value,
+            "lock requires --expect-key-id. Pass --allow-unpinned-public-key only if you accept a replaced Public Key Document.",
+        )
     sender = makeSenderDataLock(
-        PublicKeyDocument.read(args.public),
+        document,
         expected_key_id=args.expect_key_id,
-        allow_unpinned_public_key=args.allow_unpinned_public_key,
+        allow_unpinned_public_key=allow_unpinned,
     )
     sender.lockFile(args.input, args.output)
     print(f"Data Envelope written: {args.output}")
 
 
 def _cmd_open(args: argparse.Namespace) -> None:
-    user = makeUserDataLock(load_keyring(args.keyring), {"masterPassword": _read_password(args.password_env)})
+    user = makeUserDataLock(
+        load_keyring(args.keyring),
+        _read_password(args.password_env, password_stdin=args.password_stdin),
+    )
     user.openFile(args.input, args.output)
     print(f"Plaintext written: {args.output}")
 
@@ -121,7 +176,7 @@ def _emit_measurement(operation: str, size_bytes: int, elapsed_ms: float) -> Non
 
 def _cmd_bench(args: argparse.Namespace) -> None:
     keyring = load_keyring(args.keyring)
-    master_password = _read_password(args.password_env)
+    master_password = _read_password(args.password_env, password_stdin=args.password_stdin)
     sizes = [int(item) for item in args.sizes.split(",")]
 
     started = time.perf_counter()
@@ -168,9 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument("--keyring", default="keyring.hxdl.json")
     init.add_argument("--password-env")
+    init.add_argument("--password-stdin", action="store_true", help="read the Master Password from one stdin line")
     init.add_argument("--scrypt-n", type=int, default=DEFAULT_SCRYPT_N)
     init.add_argument(
         "--allow-weak-password",
+        "--allow-weak",
         action="store_true",
         help="create a Keyring even when the Master Password is weak",
     )
@@ -179,6 +236,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow scrypt N below the create-time floor; readers still open older Keyrings",
     )
+    init.add_argument(
+        "--public-keyring",
+        action="store_true",
+        help="DANGER: opt into a Keyring that may be published. Requires an 80-bit Master Password.",
+    )
+    init.add_argument("--generate-password", action="store_true", help="generate a random Master Password and print it once to stderr")
     init.set_defaults(func=_cmd_init)
 
     lock = subcommands.add_parser("lock", help="lock a local file with a Public Key Document")
@@ -189,6 +252,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="lock without pinning the recipient keyId (unsafe if the Public Key Document can be replaced)",
     )
+    lock.add_argument(
+        "--allow-unpinned-key",
+        action="store_true",
+        help="alias of --allow-unpinned-public-key",
+    )
     lock.add_argument("--in", dest="input", required=True)
     lock.add_argument("--out", dest="output", required=True)
     lock.set_defaults(func=_cmd_lock)
@@ -198,6 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     open_.add_argument("--in", dest="input", required=True)
     open_.add_argument("--out", dest="output", required=True)
     open_.add_argument("--password-env")
+    open_.add_argument("--password-stdin", action="store_true")
     open_.set_defaults(func=_cmd_open)
 
     verify = subcommands.add_parser("verify-keyring", help="verify a Keyring")
@@ -211,6 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench = subcommands.add_parser("bench", help="measure v1 Keyring and Data Envelope operations")
     bench.add_argument("--keyring", default="keyring.hxdl.json")
     bench.add_argument("--password-env")
+    bench.add_argument("--password-stdin", action="store_true")
     bench.add_argument("--sizes", default="1048576,10485760,26214400")
     bench.set_defaults(func=_cmd_bench)
 

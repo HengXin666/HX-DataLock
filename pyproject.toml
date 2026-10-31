@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "cryptography>=42.0.0",
+  "zxcvbn>=4.4.28",
 ]
 
 [project.scripts]
@@ -22,3 +23,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["sdk/py/src"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+  "ignore:scrypt N=.*below the recommended:hx_datalock.errors.ScryptCostWarning",
+  "ignore:Sender DataLock has no expected_key_id:UserWarning",
+  "ignore:encrypt_message is deprecated:DeprecationWarning",
+  "ignore:encrypt_message_for_sender is deprecated:DeprecationWarning",
+  "ignore:decrypt_message runs scrypt:DeprecationWarning",
+  "ignore:send_file is deprecated:DeprecationWarning",
+]

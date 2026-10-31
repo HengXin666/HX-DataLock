@@ -18,7 +18,7 @@ HX-DataLock 是一个面向"公共存储可读、写入方不可读、用户本�
 不适合的范围:
 
 - HX-DataLock 是加密 codec, 不是同步、数据库、对象存储或业务序列化框架。
-- 当前文件助手面向 25 MB 以内的完整数据包; 大文件分片和流式处理应由应用层或后续专用格式承接。
+- v1 文件助手仍面向 25 MB 以内的完整数据包。更大的载荷使用 `hxdl.stream.v1` 和 `hxdl.manifest.v1`，见 [docs/spec/stream-v1.md](docs/spec/stream-v1.md)。
 - `Data Envelope` 会保留解密所需的公开元数据, 用于跨语言解析、收件方匹配和认证解密; 业务隐私边界应放在 `Payload Bytes` 内部。
 
 ## 工作流程
@@ -35,7 +35,9 @@ HX-DataLock 是一个面向"公共存储可读、写入方不可读、用户本�
 
 `Write Key` 是 X25519 密钥对的公开半边，写在 `Public Key Document` 里；`Read Key` 是匹配的私有半边，被 Master Password 派生出的 wrapping key 加密后写在 `Keyring` 里。Write-only Sender 用 Write Key 和一次性临时密钥为新的 `Data Envelope` 建立共享密钥，所以它能 Lock 新数据；但 X25519 的单向性质不允许从 Write Key 推回 Read Key，所以它不能 Open 已有密文。
 
-如果完整 `Keyring` 泄漏，攻击者仍然拿不到明文 Read Key，但可以离线猜 Master Password 来尝试解封 `encryptedReadKey`。因此 Keyring 应作为私有本地文件保存和备份；适合放入公共或自动化环境的是 `Public Key Document`，不是完整 Keyring。
+如果完整 `Keyring` 泄漏，攻击者仍然拿不到明文 Read Key，但可以离线猜 Master Password 来尝试解封 `encryptedReadKey`。因此 Keyring 默认是私有本地文件。适合放入公共或自动化环境的是 `Public Key Document`，不是完整 Keyring。只有显式选择公开 Keyring 时，创建才会被接受，并且 Master Password 必须达到约 80 bit 的估算熵。
+
+CLI `lock` 默认要求 `--expect-key-id`。不 pin 的发送方需要 `--allow-unpinned-key`。静态存储上的注入、调换和回滚要靠 [attestation](docs/spec/attestation-v1.md)，不能只靠 AES-GCM。
 
 ## 快速开始
 
@@ -59,7 +61,7 @@ uv run hxdl open --keyring keyring.hxdl.json --in message.hxdl.json --out messag
 | --- | --- | --- |
 | Python | 完整 SDK、Sender DataLock、User DataLock、CLI、本地文件助手 | [sdk/py/README.md](sdk/py/README.md) |
 | Node/TypeScript | 完整 SDK、Sender DataLock、User DataLock、CLI、本地文件助手 | [sdk/node/README.md](sdk/node/README.md) |
-| Kotlin/JVM | 用户侧 SDK, 可打开 Envelope, 也可用完整 Keyring 本地加密 | [sdk/kotlin/README.md](sdk/kotlin/README.md) |
+| Kotlin/JVM 与 Android AAR | 可打开 Envelope，可用 Keyring 本地加密，也有 Sender、字符串解析和 stream。iOS 走 Swift 包 | [sdk/kotlin/README.md](sdk/kotlin/README.md) |
 
 ## 设计与规范
 

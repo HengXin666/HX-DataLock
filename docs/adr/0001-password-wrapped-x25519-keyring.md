@@ -1,8 +1,8 @@
 # Password-wrapped X25519 Keyring
 
-A Keyring is a private local document. It exposes an X25519 Write Key and stores the matching Read Key encrypted by a key derived from the user's Master Password. Public GitHub repositories, GitHub Actions, and other public or automation storage receive a Public Key Document only. They never receive the Keyring or the Master Password. Local machines remain the only place where the Read Key is unwrapped.
+A Keyring is a private local document. It exposes an X25519 Write Key and stores the matching Read Key encrypted by a key derived from the user's Master Password. Public repositories, GitHub Actions, and other public or automation storage receive a Public Key Document only. They do not receive the Keyring or the Master Password. Local machines remain the only place where the Read Key is unwrapped.
 
-ADR 0025 supersedes the earlier wording that stored the Keyring itself on GitHub. That layout made an Offline Guessing Attack possible for anyone who could read the repository.
+ADR 0025 supersedes the earlier wording that stored the Keyring itself in a public repository. That layout made an Offline Guessing Attack possible for anyone who could read the repository. An explicit public-Keyring creation path still exists, and it requires about 80 bits of estimated entropy plus a danger warning.
 
 ## Considered Options
 

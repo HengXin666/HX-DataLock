@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <title>HX-DataLock browser</title>
+  </head>
+  <body>
+    <p>This page loads the bundled browser codec and round-trips a short payload in a Worker-capable async API. It does not read a password from the server.</p>
+    <pre id="out">loading…</pre>
+    <script type="module">
+      import { createKeyring, exportPublicKeyDocument, lockText, openText } from "../../sdk/node/dist/browser.bundle.js";
+
+      const password = "correct horse battery staple for hx datalock";
+      const keyring = await createKeyring(password, { scryptN: 16384 });
+      const publicDocument = exportPublicKeyDocument(keyring);
+      const envelope = await lockText(publicDocument, "browser hello", {
+        expectedKeyId: publicDocument.publicWriteKey.keyId,
+      });
+      const opened = await openText(keyring, password, envelope);
+      document.getElementById("out").textContent = `${opened}\n${publicDocument.publicWriteKey.keyId}`;
+    </script>
+  </body>
+</html>
